@@ -7,6 +7,9 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { SystemConfigModule } from './system-config/system-config.module';
+import { InterestRatesModule } from './interest-rates/interest-rates.module';
+import { ExternalApiModule } from './external-api/external-api.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -27,6 +30,9 @@ import configuration from './config/configuration';
     PrismaModule,
     AuthModule,
     UsersModule,
+    SystemConfigModule,
+    InterestRatesModule,
+    ExternalApiModule,
   ],
   controllers: [AppController],
   providers: [

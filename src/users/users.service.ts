@@ -1,23 +1,27 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
-import { UserRole } from '@prisma/client';
+import { UserRole, ConfigKey } from '@prisma/client';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
+import { SystemConfigService } from '../system-config/system-config.service';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private systemConfigService: SystemConfigService,
+  ) {}
 
   async create(createUserDto: CreateUserDto, currentUser: any): Promise<UserResponseDto> {
     // Check role permissions
     this.validateRoleCreation(createUserDto.role, currentUser.role);
 
-    // Validate DNI/CUIT for MANAGER role
-    if (createUserDto.role === UserRole.MANAGER) {
-      this.validateUserFields(createUserDto);
-    }
+    // Check user creation limits
+    await this.validateUserCreationLimits(createUserDto.role, currentUser);
+
+    // No DNI/CUIT validation needed - moved to Client model
 
     // Check if email already exists
     const existingUser = await this.prisma.user.findUnique({
@@ -28,10 +32,7 @@ export class UsersService {
       throw new BadRequestException('Email already exists');
     }
 
-    // Check DNI/CUIT uniqueness for MANAGER role
-    if (createUserDto.role === UserRole.MANAGER) {
-      await this.validateUniqueFields(createUserDto);
-    }
+    // No DNI/CUIT uniqueness validation needed - moved to Client model
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
 
@@ -62,8 +63,6 @@ export class UsersService {
           fullName: true,
           phone: true,
           role: true,
-          dni: true,
-          cuit: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -97,8 +96,6 @@ export class UsersService {
         fullName: true,
         phone: true,
         role: true,
-        dni: true,
-        cuit: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -125,13 +122,8 @@ export class UsersService {
       throw new ForbiddenException('Cannot update user role');
     }
 
-    // Validate DNI/CUIT for MANAGER role
-    if (updateUserDto.role === UserRole.MANAGER || existingUser.role === UserRole.MANAGER) {
-      this.validateUserFields({ ...existingUser, ...updateUserDto });
-    }
-
     // Check unique fields if updating
-    if (updateUserDto.email || updateUserDto.dni || updateUserDto.cuit) {
+    if (updateUserDto.email) {
       await this.validateUniqueFieldsUpdate(id, updateUserDto);
     }
 
@@ -149,8 +141,6 @@ export class UsersService {
         fullName: true,
         phone: true,
         role: true,
-        dni: true,
-        cuit: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -174,10 +164,67 @@ export class UsersService {
     });
   }
 
+  async getCreatedUsers(userId: string): Promise<UserResponseDto[]> {
+    const createdUsers = await this.prisma.user.findMany({
+      where: {
+        createdById: userId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return createdUsers;
+  }
+
+  async getUserHierarchy(userId: string): Promise<{
+    createdBy: UserResponseDto | null;
+    createdUsers: UserResponseDto[];
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            phone: true,
+            role: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const createdUsers = await this.getCreatedUsers(userId);
+
+    return {
+      createdBy: user.createdBy,
+      createdUsers,
+    };
+  }
+
   private validateRoleCreation(newRole: UserRole, currentUserRole: UserRole): void {
     const roleHierarchy: Record<UserRole, UserRole[]> = {
       [UserRole.SUPERADMIN]: [UserRole.ADMIN],
-      [UserRole.ADMIN]: [UserRole.MANAGER],
+      [UserRole.ADMIN]: [UserRole.SUBADMIN],
+      [UserRole.SUBADMIN]: [UserRole.MANAGER],
       [UserRole.MANAGER]: [],
     };
 
@@ -187,29 +234,42 @@ export class UsersService {
     }
   }
 
-  private validateUserFields(userData: any): void {
-    if (!userData.dni && !userData.cuit) {
-      throw new BadRequestException('Either DNI or CUIT must be provided for MANAGER role');
+  private async validateUserCreationLimits(newRole: UserRole, currentUser: any): Promise<void> {
+    // SUPERADMIN has no limits
+    if (currentUser.role === UserRole.SUPERADMIN) {
+      return;
+    }
+
+    // Count current created users by the current user
+    const createdUsersCount = await this.prisma.user.count({
+      where: {
+        createdById: currentUser.id,
+        role: newRole,
+        deletedAt: null,
+      },
+    });
+
+    let maxAllowed = 0;
+    let limitType = '';
+
+    if (currentUser.role === UserRole.ADMIN && newRole === UserRole.SUBADMIN) {
+      maxAllowed = await this.systemConfigService.getConfig(ConfigKey.ADMIN_MAX_SUBADMINS);
+      limitType = 'SUBADMIN';
+    } else if (currentUser.role === UserRole.SUBADMIN && newRole === UserRole.MANAGER) {
+      maxAllowed = await this.systemConfigService.getConfig(ConfigKey.SUBADMIN_MAX_MANAGERS);
+      limitType = 'MANAGER';
+    }
+
+    if (maxAllowed > 0 && createdUsersCount >= maxAllowed) {
+      throw new ForbiddenException(
+        `You have reached the maximum limit of ${maxAllowed} ${limitType} accounts. Current count: ${createdUsersCount}`,
+      );
     }
   }
 
-  private async validateUniqueFields(userData: any): Promise<void> {
-    if (userData.dni) {
-      const existingDni = await this.prisma.user.findUnique({
-        where: { dni: userData.dni },
-      });
-      if (existingDni) {
-        throw new BadRequestException('DNI already exists');
-      }
-    }
-
-    if (userData.cuit) {
-      const existingCuit = await this.prisma.user.findUnique({
-        where: { cuit: userData.cuit },
-      });
-      if (existingCuit) {
-        throw new BadRequestException('CUIT already exists');
-      }
+  private validateUserFields(userData: any): void {
+    if (!userData.dni && !userData.cuit) {
+      throw new BadRequestException('Either DNI or CUIT must be provided for MANAGER role');
     }
   }
 
@@ -222,31 +282,14 @@ export class UsersService {
         throw new BadRequestException('Email already exists');
       }
     }
-
-    if (updateData.dni) {
-      const existingDni = await this.prisma.user.findFirst({
-        where: { dni: updateData.dni, id: { not: id } },
-      });
-      if (existingDni) {
-        throw new BadRequestException('DNI already exists');
-      }
-    }
-
-    if (updateData.cuit) {
-      const existingCuit = await this.prisma.user.findFirst({
-        where: { cuit: updateData.cuit, id: { not: id } },
-      });
-      if (existingCuit) {
-        throw new BadRequestException('CUIT already exists');
-      }
-    }
   }
 
   private canUpdateRole(currentRole: UserRole, newRole: UserRole, userRole: UserRole): boolean {
     // Only allow updating roles within the user's permission scope
     const roleHierarchy: Record<UserRole, UserRole[]> = {
       [UserRole.SUPERADMIN]: [UserRole.ADMIN],
-      [UserRole.ADMIN]: [UserRole.MANAGER],
+      [UserRole.ADMIN]: [UserRole.SUBADMIN],
+      [UserRole.SUBADMIN]: [UserRole.MANAGER],
       [UserRole.MANAGER]: [],
     };
 

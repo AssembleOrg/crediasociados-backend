@@ -24,16 +24,4 @@ export class CreateUserDto {
   @ApiProperty({ enum: UserRole, example: UserRole.MANAGER })
   @IsEnum(UserRole)
   role: UserRole;
-
-  @ValidateIf((o) => o.role === UserRole.MANAGER)
-  @ApiPropertyOptional({ example: '12345678' })
-  @IsOptional()
-  @IsString()
-  dni?: string;
-
-  @ValidateIf((o) => o.role === UserRole.MANAGER)
-  @ApiPropertyOptional({ example: '20-12345678-9' })
-  @IsOptional()
-  @IsString()
-  cuit?: string;
 } 

@@ -28,7 +28,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Create a new user' })
   @ApiResponse({ status: 201, description: 'User created successfully', type: UserResponseDto })
   @ApiResponse({ status: 400, description: 'Bad request' })
@@ -41,7 +41,7 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Get all users with pagination' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async findAll(@Query() paginationDto: PaginationDto): Promise<PaginatedResponse<UserResponseDto>> {
@@ -49,7 +49,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Get a user by ID' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User retrieved successfully', type: UserResponseDto })
@@ -59,7 +59,7 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Update a user' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User updated successfully', type: UserResponseDto })
@@ -75,12 +75,33 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Delete a user (soft delete)' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User deleted successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async remove(@Param('id') id: string): Promise<void> {
     return this.usersService.remove(id);
+  }
+
+  @Get(':id/created-users')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
+  @ApiOperation({ summary: 'Get users created by a specific user' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'Created users retrieved successfully' })
+  async getCreatedUsers(@Param('id') id: string): Promise<UserResponseDto[]> {
+    return this.usersService.getCreatedUsers(id);
+  }
+
+  @Get(':id/hierarchy')
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
+  @ApiOperation({ summary: 'Get user hierarchy (who created them and who they created)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User hierarchy retrieved successfully' })
+  async getUserHierarchy(@Param('id') id: string): Promise<{
+    createdBy: UserResponseDto | null;
+    createdUsers: UserResponseDto[];
+  }> {
+    return this.usersService.getUserHierarchy(id);
   }
 } 
