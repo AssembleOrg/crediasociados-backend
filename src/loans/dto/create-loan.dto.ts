@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsInt, IsPositive, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsInt, IsPositive, IsDateString, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LoanStatus, Currency, PaymentFrequency, PaymentDay } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -12,6 +12,16 @@ export class CreateLoanDto {
   @Type(() => Number)
   @IsPositive()
   amount: number;
+
+  @ApiProperty({ example: 0.05 })
+  @Type(() => Number)
+  @IsPositive()
+  baseInterestRate: number;
+
+  @ApiProperty({ example: 0.05 })
+  @Type(() => Number)
+  @IsPositive()
+  penaltyInterestRate: number;
 
   @ApiPropertyOptional({ enum: Currency, example: Currency.ARS })
   @IsOptional()
@@ -38,15 +48,10 @@ export class CreateLoanDto {
   @IsDateString()
   firstDueDate?: string;
 
-  @ApiProperty({ example: 15.0, description: 'Base interest rate percentage' })
-  @Type(() => Number)
-  @IsPositive()
-  baseInterestRate: number;
-
-  @ApiProperty({ example: 35.0, description: 'Penalty interest rate for overdue payments' })
-  @Type(() => Number)
-  @IsPositive()
-  penaltyInterestRate: number;
+  @ApiPropertyOptional({ example: 'LOAN-2024-001', description: 'Unique tracking code for the loan (auto-generated if not provided)' })
+  @IsOptional()
+  @IsString()
+  loanTrack?: string;
 
   @ApiPropertyOptional({ example: 'Personal loan for business expansion' })
   @IsOptional()

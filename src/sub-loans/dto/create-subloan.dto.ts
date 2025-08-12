@@ -19,12 +19,7 @@ export class CreateSubLoanDto {
   @IsPositive()
   amount: number;
 
-  @ApiProperty({ example: 15.0 })
-  @Type(() => Number)
-  @IsPositive()
-  interestRate: number;
-
-  @ApiProperty({ example: 9583.33 })
+  @ApiProperty({ example: 8333.33 })
   @Type(() => Number)
   @IsPositive()
   totalAmount: number;

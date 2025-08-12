@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,11 +7,191 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  password       String
+  phone          String?
+  fullName       String
+  role           UserRole        @default(MANAGER)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deletedAt      DateTime?
+  createdById    String?
+  managedClients ClientManager[]
+  refreshTokens  RefreshToken[]
+  createdBy      User?           @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers   User[]          @relation("UserCreatedBy")
+
+  @@map("users")
+}
+
+model Client {
+  id           String          @id @default(cuid())
+  fullName     String
+  dni          String?         @unique
+  cuit         String?         @unique
+  phone        String?
+  email        String?
+  address      String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  deletedAt    DateTime?
+  job          String?
+  managers     ClientManager[]
+  loans        Loan[]
+  transactions Transaction[]
+
+  @@map("clients")
+}
+
+model ClientManager {
+  id        String    @id @default(cuid())
+  clientId  String
+  userId    String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, userId])
+  @@map("client_managers")
+}
+
+model Loan {
+  id                  String           @id @default(cuid())
+  clientId            String
+  amount              Decimal          @db.Decimal(40, 2)
+  status              LoanStatus       @default(PENDING)
+  requestDate         DateTime         @default(now())
+  approvedDate        DateTime?
+  completedDate       DateTime?
+  description         String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  deletedAt           DateTime?
+  baseInterestRate    Decimal          @db.Decimal(5, 2)
+  currency            Currency         @default(ARS)
+  firstDueDate        DateTime?
+  notes               String?
+  paymentDay          PaymentDay?
+  paymentFrequency    PaymentFrequency
+  penaltyInterestRate Decimal          @db.Decimal(5, 2)
+  totalPayments       Int
+  loanTrack           String           @unique
+  
+  // Campos para secuencia atómica
+  prefix              String
+  year                Int
+  sequence            Int
+  
+  originalAmount      Decimal          @db.Decimal(40, 2)
+  client              Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  subLoans            SubLoan[]
+  transactions        Transaction[]
+
+  @@unique([prefix, year, sequence])
+  @@map("loans")
+}
+
+model SubLoan {
+  id            String        @id @default(cuid())
+  loanId        String
+  paymentNumber Int
+  amount        Decimal       @db.Decimal(40, 2)
+  totalAmount   Decimal       @db.Decimal(40, 2)
+  status        SubLoanStatus @default(PENDING)
+  dueDate       DateTime
+  paidDate      DateTime?
+  paidAmount    Decimal       @default(0) @db.Decimal(40, 2)
+  daysOverdue   Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+  loan          Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  transactions  Transaction[]
+
+  @@unique([loanId, paymentNumber])
+  @@map("sub_loans")
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  loanId          String?
+  clientId        String?
+  type            TransactionType
+  amount          Decimal         @db.Decimal(40, 2)
+  currency        Currency        @default(ARS)
+  description     String
+  transactionDate DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
+  subLoanId       String?
+  client          Client?         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  loan            Loan?           @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  subLoan         SubLoan?        @relation(fields: [subLoanId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model ExternalApiResponse {
+  id                 String   @id @default(cuid())
+  compra             Decimal  @db.Decimal(20, 2)
+  venta              Decimal  @db.Decimal(20, 2)
+  casa               String
+  nombre             String
+  moneda             String
+  fechaActualizacion String
+  apiUrl             String
+  status             String   @default("SUCCESS")
+  responseTime       Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("external_api_responses")
+}
+
+model SystemConfig {
+  id          String    @id @default(cuid())
+  key         ConfigKey @unique
+  value       Int
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@map("system_config")
+}
+
+model LoanSequence {
+  prefix String
+  year   Int
+  next   Int @default(1)
+  
+  @@id([prefix, year])
+  @@map("loan_sequences")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
 enum UserRole {
   SUPERADMIN
   ADMIN
-  SUBADMIN
   MANAGER
+  SUBADMIN
 }
 
 enum LoanStatus {
@@ -66,244 +240,4 @@ enum SubLoanStatus {
 enum TransactionType {
   INCOME
   EXPENSE
-}
-
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  phone     String?
-  fullName  String
-  role      UserRole @default(MANAGER)
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  createdBy     User?   @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdById   String?
-  createdUsers  User[]  @relation("UserCreatedBy")
-  refreshTokens RefreshToken[]
-  
-  // Manager-Client relationship (many-to-many)
-  managedClients ClientManager[]
-  
-  // SUBADMIN interest rate configurations
-  interestRateConfigs InterestRateConfig[] @relation("SubAdminInterestRates")
-  
-  @@map("users")
-}
-
-model Client {
-  id       String @id @default(cuid())
-  fullName String
-  dni      String? @unique
-  cuit     String? @unique
-  phone    String?
-  email    String?
-  address  String?
-  job      String?
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  managers ClientManager[]
-  loans    Loan[]
-  transactions Transaction[]
-  
-  @@map("clients")
-}
-
-model ClientManager {
-  id       String @id @default(cuid())
-  clientId String
-  userId   String
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@unique([clientId, userId])
-  @@map("client_managers")
-}
-
-model Loan {
-  id       String     @id @default(cuid())
-  clientId String
-  amount   Decimal    @db.Decimal(15, 2)
-  currency Currency   @default(ARS)
-  status   LoanStatus @default(PENDING)
-  
-  // Payment configuration
-  paymentFrequency PaymentFrequency
-  paymentDay       PaymentDay?
-  totalPayments    Int              // Total number of payments
-  
-  // Dates
-  requestDate   DateTime @default(now())
-  approvedDate  DateTime?
-  firstDueDate  DateTime? // First payment due date
-  completedDate DateTime?
-  
-  // Interest configuration
-  baseInterestRate    Decimal @db.Decimal(5, 2) // Base interest rate
-  penaltyInterestRate Decimal @db.Decimal(5, 2) // Penalty for overdue payments
-  
-  // Additional details
-  description String?
-  notes       String?
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  subLoans  SubLoan[]
-  transactions Transaction[]
-  
-  @@map("loans")
-}
-
-model SubLoan {
-  id           String        @id @default(cuid())
-  loanId       String
-  paymentNumber Int          // 1, 2, 3, etc.
-  amount       Decimal       @db.Decimal(15, 2)
-  interestRate Decimal       @db.Decimal(5, 2)
-  totalAmount  Decimal       @db.Decimal(15, 2) // amount + interest
-  status       SubLoanStatus @default(PENDING)
-  
-  // Dates
-  dueDate     DateTime
-  paidDate    DateTime?
-  
-  // Payment tracking
-  paidAmount  Decimal @default(0) @db.Decimal(15, 2)
-  
-  // Days overdue calculation
-  daysOverdue Int @default(0)
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  loan Loan @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
-  @@unique([loanId, paymentNumber])
-  @@map("sub_loans")
-}
-
-model Transaction {
-  id          String          @id @default(cuid())
-  loanId      String?
-  clientId    String?
-  type        TransactionType
-  amount      Decimal         @db.Decimal(15, 2)
-  currency    Currency        @default(ARS)
-  description String
-  
-  // Reference data
-  subLoanId String? // Can reference SubLoan ID or other entities
-  
-  // Dates
-  transactionDate DateTime @default(now())
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  loan   Loan?   @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  subLoan SubLoan? @relation(fields: [subLoanId], references: [id], onDelete: Cascade)
-  
-  @@map("transactions")
-}
-
-model InterestRateConfig {
-  id        String @id @default(cuid())
-  subAdminId String
-  daysOverdue Int
-  interestRate Decimal @db.Decimal(5, 2)
-  isActive    Boolean @default(true)
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  subAdmin User @relation("SubAdminInterestRates", fields: [subAdminId], references: [id], onDelete: Cascade)
-  
-  @@unique([subAdminId, daysOverdue])
-  @@map("interest_rate_configs")
-}
-
-model ExternalApiResponse {
-  id        String @id @default(cuid())
-  
-  // API Response data
-  compra    Decimal @db.Decimal(10, 2)
-  venta     Decimal @db.Decimal(10, 2)
-  casa      String
-  nombre    String
-  moneda    String
-  fechaActualizacion String
-  
-  // Metadata
-  apiUrl    String
-  status    String @default("SUCCESS") // SUCCESS, ERROR, TIMEOUT
-  responseTime Int? // Response time in milliseconds
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  @@map("external_api_responses")
-}
-
-model SystemConfig {
-  id          String    @id @default(cuid())
-  key         ConfigKey @unique
-  value       Int
-  description String?
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  @@map("system_config")
-}
-
-model RefreshToken {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  userId    String
-  expiresAt DateTime
-  
-  // Audit fields
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
-  
-  // Relationships
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("refresh_tokens")
 }
