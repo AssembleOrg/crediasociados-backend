@@ -1,15 +1,18 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { TrackingCodeUtil } from '../common/utils/tracking-code.util';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class LoansService {
   constructor(
     private prisma: PrismaService,
-    private subLoanGenerator: SubLoanGeneratorService
+    private subLoanGenerator: SubLoanGeneratorService,
   ) {}
 
   async createLoan(createLoanDto: CreateLoanDto, userId: string) {
@@ -23,7 +26,9 @@ export class LoansService {
     });
 
     if (!clientManager) {
-      throw new BadRequestException('Cliente no encontrado o no gestionado por el usuario');
+      throw new BadRequestException(
+        'Cliente no encontrado o no gestionado por el usuario',
+      );
     }
 
     // Generar o usar el código de tracking
@@ -31,10 +36,14 @@ export class LoansService {
     let prefix: string;
     let year: number;
     let sequence: number;
-    
+
     if (!createLoanDto.loanTrack) {
       // Generar código automáticamente usando secuencia atómica
-      const trackingData = await TrackingCodeUtil.generateSequentialTrackingCode(this.prisma, 'CREDITO');
+      const trackingData =
+        await TrackingCodeUtil.generateSequentialTrackingCode(
+          this.prisma,
+          'CREDITO',
+        );
       loanTrack = trackingData.trackingCode;
       prefix = trackingData.prefix;
       year = trackingData.year;
@@ -42,16 +51,18 @@ export class LoansService {
     } else {
       // Usar código personalizado
       loanTrack = createLoanDto.loanTrack;
-      
+
       // Verificar que el código personalizado sea único
       const existingLoan = await this.prisma.loan.findUnique({
         where: { loanTrack: loanTrack },
       });
 
       if (existingLoan) {
-        throw new BadRequestException('El código de tracking ya existe en el sistema');
+        throw new BadRequestException(
+          'El código de tracking ya existe en el sistema',
+        );
       }
-      
+
       // Para códigos personalizados, extraer información si es posible
       const parts = loanTrack.split('-');
       if (parts.length >= 3) {
@@ -77,7 +88,9 @@ export class LoansService {
           paymentFrequency: createLoanDto.paymentFrequency,
           paymentDay: createLoanDto.paymentDay,
           totalPayments: createLoanDto.totalPayments,
-          firstDueDate: createLoanDto.firstDueDate ? new Date(createLoanDto.firstDueDate) : null,
+          firstDueDate: createLoanDto.firstDueDate
+            ? new Date(createLoanDto.firstDueDate)
+            : null,
           loanTrack: loanTrack,
           prefix: prefix,
           year: year,
@@ -96,7 +109,9 @@ export class LoansService {
       await this.subLoanGenerator.generateSubLoans(
         loan.id,
         createLoanDto,
-        createLoanDto.firstDueDate ? new Date(createLoanDto.firstDueDate) : undefined
+        createLoanDto.firstDueDate
+          ? new Date(createLoanDto.firstDueDate)
+          : undefined,
       );
 
       // Obtener el loan con los subloans generados
@@ -275,4 +290,4 @@ export class LoansService {
 
     return loan;
   }
-} 
+}

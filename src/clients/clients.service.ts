@@ -1,15 +1,25 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClientDto, UpdateClientDto } from './dto';
-import { ClientManager, UserRole } from '@prisma/client';
+import { UserRole } from 'src/common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
+import { ClientManager } from '../common/types/client-manager.interface';
 
 @Injectable()
 export class ClientsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(createClientDto: CreateClientDto, userId: string, userRole: UserRole) {
+  async create(
+    createClientDto: CreateClientDto,
+    userId: string,
+    userRole: UserRole,
+  ) {
     // Solo MANAGER puede crear clients
     if (userRole !== UserRole.MANAGER) {
       throw new ForbiddenException('Solo los MANAGER pueden crear clientes');
@@ -55,7 +65,8 @@ export class ClientsService {
     if (existingClient) {
       // El cliente ya existe, verificar si ya está asignado al manager actual
       const isAlreadyManaged = existingClient.managers.some(
-        (manager: ClientManager) => manager.userId === userId && !manager.deletedAt
+        (manager: ClientManager) =>
+          manager.userId === userId && !manager.deletedAt,
       );
 
       if (isAlreadyManaged) {
@@ -97,11 +108,15 @@ export class ClientsService {
     };
   }
 
-  async findAll(paginationDto: PaginationDto, userId: string, userRole: UserRole) {
+  async findAll(
+    paginationDto: PaginationDto,
+    userId: string,
+    userRole: UserRole,
+  ) {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
-    let whereClause: any = { deletedAt: null };
+    const whereClause: any = { deletedAt: null };
 
     // Si es MANAGER, solo ver sus clientes asignados
     if (userRole === UserRole.MANAGER) {
@@ -111,7 +126,8 @@ export class ClientsService {
     // Si es SUBADMIN, ver clientes de sus MANAGER
     else if (userRole === UserRole.SUBADMIN) {
       const managedUserIds = await this.getManagedUserIds(userId);
-      const managedClientIds = await this.getManagedClientIdsByUsers(managedUserIds);
+      const managedClientIds =
+        await this.getManagedClientIdsByUsers(managedUserIds);
       whereClause.id = { in: managedClientIds };
     }
     // Si es ADMIN o SUPERADMIN, ver todos los clientes
@@ -211,7 +227,8 @@ export class ClientsService {
     // Verificar permisos de acceso
     if (userRole === UserRole.MANAGER) {
       const isManaged = client.managers.some(
-        (manager: ClientManager) => manager.userId === userId && !manager.deletedAt
+        (manager: ClientManager) =>
+          manager.userId === userId && !manager.deletedAt,
       );
       if (!isManaged) {
         throw new ForbiddenException('No tiene acceso a este cliente');
@@ -219,7 +236,8 @@ export class ClientsService {
     } else if (userRole === UserRole.SUBADMIN) {
       const managedUserIds = await this.getManagedUserIds(userId);
       const isManagedBySubordinate = client.managers.some(
-        (manager: ClientManager) => managedUserIds.includes(manager.userId) && !manager.deletedAt
+        (manager: ClientManager) =>
+          managedUserIds.includes(manager.userId) && !manager.deletedAt,
       );
       if (!isManagedBySubordinate) {
         throw new ForbiddenException('No tiene acceso a este cliente');
@@ -230,13 +248,20 @@ export class ClientsService {
     return client;
   }
 
-  async update(id: string, updateClientDto: UpdateClientDto, userId: string, userRole: UserRole) {
+  async update(
+    id: string,
+    updateClientDto: UpdateClientDto,
+    userId: string,
+    userRole: UserRole,
+  ) {
     // Verificar que el cliente existe y el usuario tiene acceso
     await this.findOne(id, userId, userRole);
 
     // Solo MANAGER puede actualizar clientes
     if (userRole !== UserRole.MANAGER) {
-      throw new ForbiddenException('Solo los MANAGER pueden actualizar clientes');
+      throw new ForbiddenException(
+        'Solo los MANAGER pueden actualizar clientes',
+      );
     }
 
     // Verificar que el manager está asignado al cliente
@@ -249,7 +274,9 @@ export class ClientsService {
     });
 
     if (!clientManager) {
-      throw new ForbiddenException('No tiene permisos para actualizar este cliente');
+      throw new ForbiddenException(
+        'No tiene permisos para actualizar este cliente',
+      );
     }
 
     // Si se está actualizando DNI o CUIT, verificar duplicidad
@@ -266,7 +293,9 @@ export class ClientsService {
       });
 
       if (existingClient) {
-        throw new BadRequestException('Ya existe un cliente con este DNI o CUIT');
+        throw new BadRequestException(
+          'Ya existe un cliente con este DNI o CUIT',
+        );
       }
     }
 
@@ -297,7 +326,9 @@ export class ClientsService {
     });
 
     if (!clientManager) {
-      throw new ForbiddenException('No tiene permisos para eliminar este cliente');
+      throw new ForbiddenException(
+        'No tiene permisos para eliminar este cliente',
+      );
     }
 
     // Soft delete del cliente
@@ -317,7 +348,9 @@ export class ClientsService {
 
   async searchByDniOrCuit(dni?: string, cuit?: string) {
     if (!dni && !cuit) {
-      throw new BadRequestException('Debe proporcionar DNI o CUIT para la búsqueda');
+      throw new BadRequestException(
+        'Debe proporcionar DNI o CUIT para la búsqueda',
+      );
     }
 
     const whereClause: any = { deletedAt: null };
@@ -370,7 +403,9 @@ export class ClientsService {
     return managedUsers.map((mu) => mu.id);
   }
 
-  private async getManagedClientIdsByUsers(userIds: string[]): Promise<string[]> {
+  private async getManagedClientIdsByUsers(
+    userIds: string[],
+  ): Promise<string[]> {
     if (userIds.length === 0) return [];
 
     const managedClients = await this.prisma.clientManager.findMany({
@@ -383,4 +418,4 @@ export class ClientsService {
 
     return managedClients.map((mc) => mc.clientId);
   }
-} 
+}

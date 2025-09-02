@@ -7,4 +7,4 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [SystemConfigService],
   exports: [SystemConfigService],
 })
-export class SystemConfigModule {} 
+export class SystemConfigModule {}

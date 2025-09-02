@@ -12,4 +12,4 @@ export interface ApiCallResult {
   data?: DolarApiResponse;
   error?: string;
   responseTime?: number;
-} 
+}

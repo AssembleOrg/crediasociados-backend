@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole } from 'src/common/enums';
 
 export class UserResponseDto {
   @ApiProperty()
@@ -28,4 +28,4 @@ export class UserResponseDto {
 
   @ApiProperty()
   updatedAt: Date;
-} 
+}

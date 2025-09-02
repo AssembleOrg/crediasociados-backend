@@ -36,4 +36,4 @@ export class UpdateClientDto {
   @IsOptional()
   @IsString()
   job?: string;
-} 
+}

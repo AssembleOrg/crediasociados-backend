@@ -104,4 +104,4 @@ export class ClientWithDetailsDto extends ClientWithManagersDto {
     loans: number;
     transactions: number;
   };
-} 
+}

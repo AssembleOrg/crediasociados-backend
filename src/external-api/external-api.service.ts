@@ -1,8 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { DolarApiResponse, ApiCallResult } from './interfaces/dolar-api.interface';
+import {
+  DolarApiResponse,
+  ApiCallResult,
+} from './interfaces/dolar-api.interface';
 import { ExternalApiResponseDto } from './dto/external-api-response.dto';
-import { PaginatedResponse, PaginationMeta } from '../common/interfaces/pagination.interface';
+import {
+  PaginatedResponse,
+  PaginationMeta,
+} from '../common/interfaces/pagination.interface';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import axios, { AxiosResponse } from 'axios';
 
@@ -19,17 +25,20 @@ export class ExternalApiService {
 
     try {
       this.logger.log('Fetching Dólar Blue data from external API...');
-      
-      const response: AxiosResponse<DolarApiResponse> = await axios.get(this.DOLAR_API_URL, {
-        timeout: 10000, // 10 seconds timeout
-        headers: {
-          'User-Agent': 'CrediAsociados-Backend/1.0.0',
-          'Accept': 'application/json',
+
+      const response: AxiosResponse<DolarApiResponse> = await axios.get(
+        this.DOLAR_API_URL,
+        {
+          timeout: 10000, // 10 seconds timeout
+          headers: {
+            'User-Agent': 'CrediAsociados-Backend/1.0.0',
+            Accept: 'application/json',
+          },
         },
-      });
+      );
 
       const responseTime = Date.now() - startTime;
-      
+
       apiCallResult = {
         success: true,
         data: response.data,
@@ -37,22 +46,23 @@ export class ExternalApiService {
       };
 
       this.logger.log(`API call successful in ${responseTime}ms`);
-      
     } catch (error) {
       const responseTime = Date.now() - startTime;
-      
+
       apiCallResult = {
         success: false,
         error: error.message || 'Unknown error',
         responseTime,
       };
 
-      this.logger.error(`API call failed after ${responseTime}ms: ${error.message}`);
+      this.logger.error(
+        `API call failed after ${responseTime}ms: ${error.message}`,
+      );
     }
 
     // Persist the result to database
     const persistedRecord = await this.persistApiResponse(apiCallResult);
-    
+
     return this.mapToDto(persistedRecord);
   }
 
@@ -106,7 +116,9 @@ export class ExternalApiService {
     return latestRecord ? this.mapToDto(latestRecord) : null;
   }
 
-  async getAllApiResponses(pagination: PaginationDto): Promise<PaginatedResponse<ExternalApiResponseDto>> {
+  async getAllApiResponses(
+    pagination: PaginationDto,
+  ): Promise<PaginatedResponse<ExternalApiResponseDto>> {
     const { page = 1, limit = 10 } = pagination;
     const skip = (page - 1) * limit;
 
@@ -121,8 +133,8 @@ export class ExternalApiService {
       this.prisma.externalApiResponse.count(),
     ]);
 
-    const data = records.map(record => this.mapToDto(record));
-    
+    const data = records.map((record) => this.mapToDto(record));
+
     const meta: PaginationMeta = {
       page,
       limit,
@@ -167,8 +179,8 @@ export class ExternalApiService {
       }),
     ]);
 
-    const data = records.map(record => this.mapToDto(record));
-    
+    const data = records.map((record) => this.mapToDto(record));
+
     const meta: PaginationMeta = {
       page,
       limit,
@@ -188,7 +200,13 @@ export class ExternalApiService {
     averageResponseTime: number;
     lastSuccessfulCall?: Date;
   }> {
-    const [totalCalls, successfulCalls, failedCalls, avgResponseTime, lastSuccessful] = await Promise.all([
+    const [
+      totalCalls,
+      successfulCalls,
+      failedCalls,
+      avgResponseTime,
+      lastSuccessful,
+    ] = await Promise.all([
       this.prisma.externalApiResponse.count(),
       this.prisma.externalApiResponse.count({ where: { status: 'SUCCESS' } }),
       this.prisma.externalApiResponse.count({ where: { status: 'ERROR' } }),
@@ -236,20 +254,25 @@ export class ExternalApiService {
   }
 
   // Method to get the current exchange rate for calculations
-  async getCurrentExchangeRate(): Promise<{ compra: number; venta: number } | null> {
+  async getCurrentExchangeRate(): Promise<{
+    compra: number;
+    venta: number;
+  } | null> {
     const latest = await this.getLatestDolarBlue();
-    
+
     if (!latest || latest.status !== 'SUCCESS') {
-      this.logger.warn('No successful exchange rate found, attempting fresh fetch...');
+      this.logger.warn(
+        'No successful exchange rate found, attempting fresh fetch...',
+      );
       const freshData = await this.fetchAndPersistDolarBlue();
-      
+
       if (freshData.status === 'SUCCESS') {
         return {
           compra: freshData.compra,
           venta: freshData.venta,
         };
       }
-      
+
       return null;
     }
 
@@ -258,4 +281,4 @@ export class ExternalApiService {
       venta: latest.venta,
     };
   }
-} 
+}

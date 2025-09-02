@@ -10,4 +10,4 @@ import { SystemConfigModule } from '../system-config/system-config.module';
   providers: [UsersService],
   exports: [UsersService],
 })
-export class UsersModule {} 
+export class UsersModule {}

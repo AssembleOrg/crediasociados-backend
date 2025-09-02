@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
-import { PaymentFrequency, PaymentDay } from '@prisma/client';
+import { PaymentFrequency, PaymentDay } from '../common/enums';
 
 @Injectable()
 export class SubLoanGeneratorService {
@@ -10,15 +10,24 @@ export class SubLoanGeneratorService {
   /**
    * Genera SubLoans automáticamente basado en la configuración del Loan
    */
-  async generateSubLoans(loanId: string, loanData: CreateLoanDto, firstDueDate?: Date): Promise<void> {
+  async generateSubLoans(
+    loanId: string,
+    loanData: CreateLoanDto,
+    firstDueDate?: Date,
+  ): Promise<void> {
     const { totalPayments, paymentFrequency, paymentDay, amount } = loanData;
-    
+
     // Calcular monto por SubLoan
     const amountPerSubLoan = Number(amount) / totalPayments;
-    
+
     // Calcular fechas de vencimiento
-    const dueDates = this.calculateDueDates(totalPayments, paymentFrequency, paymentDay, firstDueDate);
-    
+    const dueDates = this.calculateDueDates(
+      totalPayments,
+      paymentFrequency,
+      paymentDay,
+      firstDueDate,
+    );
+
     // Crear SubLoans
     const subLoansData = dueDates.map((dueDate, index) => ({
       loanId,
@@ -44,11 +53,11 @@ export class SubLoanGeneratorService {
     totalPayments: number,
     paymentFrequency: PaymentFrequency,
     paymentDay?: PaymentDay,
-    firstDueDate?: Date
+    firstDueDate?: Date,
   ): Date[] {
     const dueDates: Date[] = [];
     let currentDate = firstDueDate || new Date();
-    
+
     // Si no hay fecha específica, usar la fecha actual
     if (!firstDueDate) {
       currentDate = new Date();
@@ -56,34 +65,34 @@ export class SubLoanGeneratorService {
 
     for (let i = 0; i < totalPayments; i++) {
       const dueDate = new Date(currentDate);
-      
+
       // Ajustar la fecha según la frecuencia de pago
       switch (paymentFrequency) {
-        case 'DAILY':
+        case PaymentFrequency.DAILY:
           dueDate.setDate(dueDate.getDate() + i);
           break;
-          
-        case 'WEEKLY':
-          dueDate.setDate(dueDate.getDate() + (i * 7));
+
+        case PaymentFrequency.WEEKLY:
+          dueDate.setDate(dueDate.getDate() + i * 7);
           break;
-          
-        case 'BIWEEKLY':
-          dueDate.setDate(dueDate.getDate() + (i * 14));
+
+        case PaymentFrequency.BIWEEKLY:
+          dueDate.setDate(dueDate.getDate() + i * 14);
           break;
-          
-        case 'MONTHLY':
+
+        case PaymentFrequency.MONTHLY:
           dueDate.setMonth(dueDate.getMonth() + i);
           break;
       }
-      
+
       // Si hay un día específico de pago, ajustar la fecha
       if (paymentDay) {
         dueDate.setDate(this.getDayOfWeek(paymentDay));
       }
-      
+
       dueDates.push(dueDate);
     }
-    
+
     return dueDates;
   }
 
@@ -92,15 +101,14 @@ export class SubLoanGeneratorService {
    */
   private getDayOfWeek(paymentDay: PaymentDay): number {
     const dayMap = {
-      'MONDAY': 1,
-      'TUESDAY': 2,
-      'WEDNESDAY': 3,
-      'THURSDAY': 4,
-      'FRIDAY': 5,
-      'SATURDAY': 6,
-      'SUNDAY': 0,
+      [PaymentDay.MONDAY]: 1,
+      [PaymentDay.TUESDAY]: 2,
+      [PaymentDay.WEDNESDAY]: 3,
+      [PaymentDay.THURSDAY]: 4,
+      [PaymentDay.FRIDAY]: 5,
+      [PaymentDay.SATURDAY]: 6,
     };
-    
+
     return dayMap[paymentDay];
   }
-} 
+}

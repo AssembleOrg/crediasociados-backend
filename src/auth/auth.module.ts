@@ -27,4 +27,4 @@ import { Logger } from '@nestjs/common';
   providers: [AuthService, JwtStrategy, Logger],
   exports: [AuthService],
 })
-export class AuthModule {} 
+export class AuthModule {}

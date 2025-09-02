@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigKey } from '@prisma/client';
+import { ConfigKey } from '../common/enums/config-key.enum';
 
 @Injectable()
 export class SystemConfigService {
@@ -19,7 +19,11 @@ export class SystemConfigService {
     return config.value;
   }
 
-  async setConfig(key: ConfigKey, value: number, description?: string): Promise<void> {
+  async setConfig(
+    key: ConfigKey,
+    value: number,
+    description?: string,
+  ): Promise<void> {
     await this.prisma.systemConfig.upsert({
       where: { key },
       update: { value, description },
@@ -58,4 +62,4 @@ export class SystemConfigService {
       });
     }
   }
-} 
+}

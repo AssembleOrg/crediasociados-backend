@@ -14,4 +14,4 @@ export default () => ({
   },
   nodeEnv: process.env.NODE_ENV || 'development',
   timezone: process.env.TZ || 'America/Argentina/Buenos_Aires',
-}); 
+});

@@ -9,4 +9,4 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [ExternalApiService],
   exports: [ExternalApiService],
 })
-export class ExternalApiModule {} 
+export class ExternalApiModule {}

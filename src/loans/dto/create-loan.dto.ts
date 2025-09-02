@@ -1,6 +1,19 @@
-import { IsString, IsOptional, IsEnum, IsInt, IsPositive, IsDateString, IsNotEmpty } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsInt,
+  IsPositive,
+  IsDateString,
+  IsNotEmpty,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { LoanStatus, Currency, PaymentFrequency, PaymentDay } from '@prisma/client';
+import {
+  LoanStatus,
+  Currency,
+  PaymentFrequency,
+  PaymentDay,
+} from '../../common/enums';
 import { Type } from 'class-transformer';
 
 export class CreateLoanDto {
@@ -8,7 +21,7 @@ export class CreateLoanDto {
   @IsString()
   clientId: string;
 
-  @ApiProperty({ example: 100000.00 })
+  @ApiProperty({ example: 100000.0 })
   @Type(() => Number)
   @IsPositive()
   amount: number;
@@ -48,7 +61,11 @@ export class CreateLoanDto {
   @IsDateString()
   firstDueDate?: string;
 
-  @ApiPropertyOptional({ example: 'LOAN-2024-001', description: 'Unique tracking code for the loan (auto-generated if not provided)' })
+  @ApiPropertyOptional({
+    example: 'LOAN-2024-001',
+    description:
+      'Unique tracking code for the loan (auto-generated if not provided)',
+  })
   @IsOptional()
   @IsString()
   loanTrack?: string;
@@ -58,8 +75,10 @@ export class CreateLoanDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: 'Client requested weekly payments on Fridays' })
+  @ApiPropertyOptional({
+    example: 'Client requested weekly payments on Fridays',
+  })
   @IsOptional()
   @IsString()
   notes?: string;
-} 
+}

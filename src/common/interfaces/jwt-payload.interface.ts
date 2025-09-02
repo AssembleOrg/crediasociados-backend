@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { UserRole } from '../enums';
 
 export interface JwtPayload {
   sub: string;
@@ -6,4 +6,4 @@ export interface JwtPayload {
   role: UserRole;
   iat?: number;
   exp?: number;
-} 
+}

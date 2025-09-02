@@ -1,11 +1,20 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
-import { UserRole, ConfigKey } from '@prisma/client';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 import { SystemConfigService } from '../system-config/system-config.service';
 import * as bcrypt from 'bcryptjs';
+import { UserRole, ConfigKey } from '../common/enums';
+import {
+  convertPrismaUserToResponse,
+  convertPrismaUserRole,
+} from '../common/utils/type-converters.util';
 
 @Injectable()
 export class UsersService {
@@ -14,9 +23,15 @@ export class UsersService {
     private systemConfigService: SystemConfigService,
   ) {}
 
-  async create(createUserDto: CreateUserDto, currentUser: any): Promise<UserResponseDto> {
+  async create(
+    createUserDto: CreateUserDto,
+    currentUser: any,
+  ): Promise<UserResponseDto> {
     // Check role permissions
-    this.validateRoleCreation(createUserDto.role, currentUser.role);
+    this.validateRoleCreation(
+      createUserDto.role,
+      convertPrismaUserRole(currentUser.role),
+    );
 
     // Check user creation limits
     await this.validateUserCreationLimits(createUserDto.role, currentUser);
@@ -45,10 +60,12 @@ export class UsersService {
     });
 
     const { password, ...result } = user;
-    return result;
+    return convertPrismaUserToResponse(result);
   }
 
-  async findAll(paginationDto: PaginationDto): Promise<PaginatedResponse<UserResponseDto>> {
+  async findAll(
+    paginationDto: PaginationDto,
+  ): Promise<PaginatedResponse<UserResponseDto>> {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
@@ -75,7 +92,7 @@ export class UsersService {
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data: users,
+      data: users.map(convertPrismaUserToResponse),
       meta: {
         page,
         limit,
@@ -105,10 +122,14 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    return user;
+    return convertPrismaUserToResponse(user);
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto, currentUser: any): Promise<UserResponseDto> {
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    currentUser: any,
+  ): Promise<UserResponseDto> {
     const existingUser = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
     });
@@ -118,7 +139,14 @@ export class UsersService {
     }
 
     // Check if user is trying to update their own role or a higher role
-    if (updateUserDto.role && !this.canUpdateRole(existingUser.role, updateUserDto.role, currentUser.role)) {
+    if (
+      updateUserDto.role &&
+      !this.canUpdateRole(
+        convertPrismaUserRole(existingUser.role),
+        updateUserDto.role,
+        convertPrismaUserRole(currentUser.role),
+      )
+    ) {
       throw new ForbiddenException('Cannot update user role');
     }
 
@@ -146,7 +174,7 @@ export class UsersService {
       },
     });
 
-    return user;
+    return convertPrismaUserToResponse(user);
   }
 
   async remove(id: string): Promise<void> {
@@ -184,7 +212,7 @@ export class UsersService {
       },
     });
 
-    return createdUsers;
+    return createdUsers.map(convertPrismaUserToResponse);
   }
 
   async getUserHierarchy(userId: string): Promise<{
@@ -215,12 +243,17 @@ export class UsersService {
     const createdUsers = await this.getCreatedUsers(userId);
 
     return {
-      createdBy: user.createdBy,
+      createdBy: user.createdBy
+        ? convertPrismaUserToResponse(user.createdBy)
+        : null,
       createdUsers,
     };
   }
 
-  private validateRoleCreation(newRole: UserRole, currentUserRole: UserRole): void {
+  private validateRoleCreation(
+    newRole: UserRole,
+    currentUserRole: UserRole,
+  ): void {
     const roleHierarchy: Record<UserRole, UserRole[]> = {
       [UserRole.SUPERADMIN]: [UserRole.ADMIN],
       [UserRole.ADMIN]: [UserRole.SUBADMIN],
@@ -234,7 +267,10 @@ export class UsersService {
     }
   }
 
-  private async validateUserCreationLimits(newRole: UserRole, currentUser: any): Promise<void> {
+  private async validateUserCreationLimits(
+    newRole: UserRole,
+    currentUser: any,
+  ): Promise<void> {
     // SUPERADMIN has no limits
     if (currentUser.role === UserRole.SUPERADMIN) {
       return;
@@ -253,10 +289,17 @@ export class UsersService {
     let limitType = '';
 
     if (currentUser.role === UserRole.ADMIN && newRole === UserRole.SUBADMIN) {
-      maxAllowed = await this.systemConfigService.getConfig(ConfigKey.ADMIN_MAX_SUBADMINS);
+      maxAllowed = await this.systemConfigService.getConfig(
+        ConfigKey.ADMIN_MAX_SUBADMINS,
+      );
       limitType = 'SUBADMIN';
-    } else if (currentUser.role === UserRole.SUBADMIN && newRole === UserRole.MANAGER) {
-      maxAllowed = await this.systemConfigService.getConfig(ConfigKey.SUBADMIN_MAX_MANAGERS);
+    } else if (
+      currentUser.role === UserRole.SUBADMIN &&
+      newRole === UserRole.MANAGER
+    ) {
+      maxAllowed = await this.systemConfigService.getConfig(
+        ConfigKey.SUBADMIN_MAX_MANAGERS,
+      );
       limitType = 'MANAGER';
     }
 
@@ -269,11 +312,16 @@ export class UsersService {
 
   private validateUserFields(userData: any): void {
     if (!userData.dni && !userData.cuit) {
-      throw new BadRequestException('Either DNI or CUIT must be provided for MANAGER role');
+      throw new BadRequestException(
+        'Either DNI or CUIT must be provided for MANAGER role',
+      );
     }
   }
 
-  private async validateUniqueFieldsUpdate(id: string, updateData: any): Promise<void> {
+  private async validateUniqueFieldsUpdate(
+    id: string,
+    updateData: any,
+  ): Promise<void> {
     if (updateData.email) {
       const existingEmail = await this.prisma.user.findFirst({
         where: { email: updateData.email, id: { not: id } },
@@ -284,7 +332,11 @@ export class UsersService {
     }
   }
 
-  private canUpdateRole(currentRole: UserRole, newRole: UserRole, userRole: UserRole): boolean {
+  private canUpdateRole(
+    currentRole: UserRole,
+    newRole: UserRole,
+    userRole: UserRole,
+  ): boolean {
     // Only allow updating roles within the user's permission scope
     const roleHierarchy: Record<UserRole, UserRole[]> = {
       [UserRole.SUPERADMIN]: [UserRole.ADMIN],
@@ -296,4 +348,4 @@ export class UsersService {
     const allowedRoles = roleHierarchy[userRole];
     return allowedRoles.includes(newRole);
   }
-} 
+}

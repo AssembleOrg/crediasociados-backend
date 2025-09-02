@@ -10,4 +10,4 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [LoansService, SubLoanGeneratorService],
   exports: [LoansService],
 })
-export class LoansModule {} 
+export class LoansModule {}

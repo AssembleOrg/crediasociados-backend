@@ -9,16 +9,28 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { ClientsService } from './clients.service';
-import { CreateClientDto, UpdateClientDto, ClientResponseDto, ClientWithDetailsDto } from './dto';
+import {
+  CreateClientDto,
+  UpdateClientDto,
+  ClientResponseDto,
+  ClientWithDetailsDto,
+} from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { UserRole } from '@prisma/client';
+import { UserRole } from 'src/common/enums';
 
 @ApiTags('Clients')
 @Controller('clients')
@@ -64,8 +76,14 @@ export class ClientsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Bad Request - Validation failed or client already assigned' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or client already assigned',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
   async create(
     @Body() createClientDto: CreateClientDto,
     @CurrentUser() currentUser: any,
@@ -120,7 +138,12 @@ export class ClientsController {
   @Get('search')
   @ApiOperation({ summary: 'Search client by DNI or CUIT' })
   @ApiQuery({ name: 'dni', required: false, type: String, example: '12345678' })
-  @ApiQuery({ name: 'cuit', required: false, type: String, example: '20-12345678-9' })
+  @ApiQuery({
+    name: 'cuit',
+    required: false,
+    type: String,
+    example: '20-12345678-9',
+  })
   @ApiResponse({
     status: 200,
     description: 'Client found successfully',
@@ -134,7 +157,10 @@ export class ClientsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Bad Request - Missing DNI or CUIT' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Missing DNI or CUIT',
+  })
   @ApiResponse({ status: 404, description: 'Client not found' })
   async searchByDniOrCuit(
     @Query('dni') dni?: string,
@@ -161,11 +187,11 @@ export class ClientsController {
     },
   })
   @ApiResponse({ status: 404, description: 'Client not found' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
-  async findOne(
-    @Param('id') id: string,
-    @CurrentUser() currentUser: any,
-  ) {
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  async findOne(@Param('id') id: string, @CurrentUser() currentUser: any) {
     const result = await this.clientsService.findOne(
       id,
       currentUser.id,
@@ -191,8 +217,14 @@ export class ClientsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Bad Request - Validation failed or duplicate DNI/CUIT' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or duplicate DNI/CUIT',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
   @ApiResponse({ status: 404, description: 'Client not found' })
   async update(
     @Param('id') id: string,
@@ -230,12 +262,12 @@ export class ClientsController {
       },
     },
   })
-  @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
   @ApiResponse({ status: 404, description: 'Client not found' })
-  async remove(
-    @Param('id') id: string,
-    @CurrentUser() currentUser: any,
-  ) {
+  async remove(@Param('id') id: string, @CurrentUser() currentUser: any) {
     const result = await this.clientsService.remove(
       id,
       currentUser.id,
@@ -243,4 +275,4 @@ export class ClientsController {
     );
     return result;
   }
-} 
+}

@@ -9,7 +9,13 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -18,7 +24,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { UserRole } from '@prisma/client';
+import { UserRole } from 'src/common/enums';
 
 @ApiTags('Users')
 @Controller('users')
@@ -30,7 +36,11 @@ export class UsersController {
   @Post()
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Create a new user' })
-  @ApiResponse({ status: 201, description: 'User created successfully', type: UserResponseDto })
+  @ApiResponse({
+    status: 201,
+    description: 'User created successfully',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   async create(
@@ -44,7 +54,9 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Get all users with pagination' })
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
-  async findAll(@Query() paginationDto: PaginationDto): Promise<PaginatedResponse<UserResponseDto>> {
+  async findAll(
+    @Query() paginationDto: PaginationDto,
+  ): Promise<PaginatedResponse<UserResponseDto>> {
     return this.usersService.findAll(paginationDto);
   }
 
@@ -52,7 +64,11 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Get a user by ID' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'User retrieved successfully', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User retrieved successfully',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
   async findOne(@Param('id') id: string): Promise<UserResponseDto> {
     return this.usersService.findOne(id);
@@ -62,7 +78,11 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Update a user' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'User updated successfully', type: UserResponseDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User updated successfully',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'User not found' })
@@ -88,20 +108,28 @@ export class UsersController {
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({ summary: 'Get users created by a specific user' })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'Created users retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Created users retrieved successfully',
+  })
   async getCreatedUsers(@Param('id') id: string): Promise<UserResponseDto[]> {
     return this.usersService.getCreatedUsers(id);
   }
 
   @Get(':id/hierarchy')
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
-  @ApiOperation({ summary: 'Get user hierarchy (who created them and who they created)' })
+  @ApiOperation({
+    summary: 'Get user hierarchy (who created them and who they created)',
+  })
   @ApiParam({ name: 'id', description: 'User ID' })
-  @ApiResponse({ status: 200, description: 'User hierarchy retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'User hierarchy retrieved successfully',
+  })
   async getUserHierarchy(@Param('id') id: string): Promise<{
     createdBy: UserResponseDto | null;
     createdUsers: UserResponseDto[];
   }> {
     return this.usersService.getUserHierarchy(id);
   }
-} 
+}

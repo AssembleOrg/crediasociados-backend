@@ -7,7 +7,7 @@ export class LoanTrackingResponseDto {
   @ApiProperty({ example: 'LOAN-2024-001' })
   loanTrack: string;
 
-  @ApiProperty({ example: 100000.00 })
+  @ApiProperty({ example: 100000.0 })
   amount: number;
 
   @ApiProperty({ example: 'ARS' })
@@ -78,4 +78,4 @@ export class LoanTrackingResponseDto {
     paidAmount: number;
     daysOverdue: number;
   }>;
-} 
+}

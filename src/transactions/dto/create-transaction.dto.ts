@@ -1,7 +1,13 @@
-import { IsString, IsOptional, IsEnum, IsPositive, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsPositive,
+  IsDateString,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TransactionType, Currency } from '@prisma/client';
 import { Type } from 'class-transformer';
+import { TransactionType, Currency } from '../../common/enums';
 
 export class CreateTransactionDto {
   @ApiPropertyOptional({ example: 'loan_id_here' })
@@ -18,7 +24,7 @@ export class CreateTransactionDto {
   @IsEnum(TransactionType)
   type: TransactionType;
 
-  @ApiProperty({ example: 10000.00 })
+  @ApiProperty({ example: 10000.0 })
   @Type(() => Number)
   @IsPositive()
   amount: number;
@@ -41,4 +47,4 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsDateString()
   transactionDate?: string;
-} 
+}

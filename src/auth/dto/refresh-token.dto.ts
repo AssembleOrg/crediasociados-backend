@@ -5,4 +5,4 @@ export class RefreshTokenDto {
   @ApiProperty()
   @IsString()
   refreshToken: string;
-} 
+}

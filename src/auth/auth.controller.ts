@@ -1,5 +1,19 @@
-import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus, Logger, BadRequestException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshTokenDto } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -9,7 +23,10 @@ import { Public } from '../common/decorators/public.decorator';
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService, private readonly logger: Logger) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly logger: Logger,
+  ) {}
 
   @Public()
   @Post('login')
@@ -19,7 +36,10 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Credenciales incorrectas' })
   async login(@Body() loginDto: LoginDto) {
     this.logger.log(`Login attempt for user ${loginDto.email}`);
-    const user = await this.authService.validateUser(loginDto.email, loginDto.password);
+    const user = await this.authService.validateUser(
+      loginDto.email,
+      loginDto.password,
+    );
     if (!user) {
       throw new BadRequestException('El email o la contraseña son incorrectos');
     }
@@ -42,8 +62,11 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Cierre de sesión' })
   @ApiResponse({ status: 200, description: 'Cierre de sesión exitoso' })
-  async logout(@CurrentUser() user: any, @Body() refreshTokenDto: RefreshTokenDto) {
+  async logout(
+    @CurrentUser() user: any,
+    @Body() refreshTokenDto: RefreshTokenDto,
+  ) {
     await this.authService.logout(refreshTokenDto.refreshToken);
     return { message: 'Cierre de sesión exitoso' };
   }
-} 
+}

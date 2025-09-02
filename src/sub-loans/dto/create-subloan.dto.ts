@@ -1,6 +1,13 @@
-import { IsString, IsOptional, IsEnum, IsInt, IsPositive, IsDateString } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsInt,
+  IsPositive,
+  IsDateString,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { SubLoanStatus } from '@prisma/client';
+import { SubLoanStatus } from '../../common/enums';
 import { Type } from 'class-transformer';
 
 export class CreateSubLoanDto {
@@ -32,4 +39,4 @@ export class CreateSubLoanDto {
   @IsOptional()
   @IsEnum(SubLoanStatus)
   status?: SubLoanStatus;
-} 
+}

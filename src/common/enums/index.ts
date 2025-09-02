@@ -1,1 +1,8 @@
-export * from './user-role.enum'; 
+export { UserRole } from './user-role.enum';
+export { ConfigKey } from './config-key.enum';
+export { LoanStatus } from './loan-status.enum';
+export { Currency } from './currency.enum';
+export { PaymentFrequency } from './payment-frequency.enum';
+export { PaymentDay } from './payment-day.enum';
+export { TransactionType } from './transaction-type.enum';
+export { SubLoanStatus } from './sub-loan-status.enum';
