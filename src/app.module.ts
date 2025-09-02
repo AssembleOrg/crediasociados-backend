@@ -12,6 +12,8 @@ import { SystemConfigModule } from './system-config/system-config.module';
 import { ExternalApiModule } from './external-api/external-api.module';
 import { LoansModule } from './loans/loans.module';
 import { ClientsModule } from './clients/clients.module';
+import { SubLoansModule } from './sub-loans/sub-loans.module';
+import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -37,6 +39,8 @@ import configuration from './config/configuration';
     ExternalApiModule,
     LoansModule,
     ClientsModule,
+    SubLoansModule,
+    ScheduledTasksModule,
   ],
   controllers: [AppController],
   providers: [

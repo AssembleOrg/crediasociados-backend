@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { TrackingCodeUtil } from '../common/utils/tracking-code.util';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
+import { LoanStatus } from 'src/common/enums';
 
 @Injectable()
 export class LoansService {
@@ -87,6 +88,7 @@ export class LoansService {
           currency: createLoanDto.currency || 'ARS',
           paymentFrequency: createLoanDto.paymentFrequency,
           paymentDay: createLoanDto.paymentDay,
+          status: LoanStatus.ACTIVE,
           totalPayments: createLoanDto.totalPayments,
           firstDueDate: createLoanDto.firstDueDate
             ? new Date(createLoanDto.firstDueDate)
@@ -112,6 +114,7 @@ export class LoansService {
         createLoanDto.firstDueDate
           ? new Date(createLoanDto.firstDueDate)
           : undefined,
+        prisma, // Pass the transaction's prisma instance
       );
 
       // Obtener el loan con los subloans generados
@@ -179,6 +182,78 @@ export class LoansService {
     return loan;
   }
 
+  async getAllActiveLoans(userId: string) {
+    // Get all active loans based on user role and hierarchy
+    const loans = await this.prisma.loan.findMany({
+      where: {
+        deletedAt: null,
+        client: {
+          managers: {
+            some: {
+              userId: userId,
+              deletedAt: null,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        clientId: true,
+        amount: true,
+        status: true,
+        requestDate: true,
+        approvedDate: true,
+        completedDate: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+        deletedAt: true,
+        baseInterestRate: true,
+        currency: true,
+        firstDueDate: true,
+        notes: true,
+        paymentDay: true,
+        paymentFrequency: true,
+        penaltyInterestRate: true,
+        totalPayments: true,
+        loanTrack: true,
+        prefix: true,
+        year: true,
+        sequence: true,
+        originalAmount: true,
+        client: {
+          select: {
+            id: true,
+            fullName: true,
+            dni: true,
+            cuit: true,
+          },
+        },
+        subLoans: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            loanId: true,
+            paymentNumber: true,
+            amount: true,
+            totalAmount: true,
+            status: true,
+            dueDate: true,
+            paidDate: true,
+            paidAmount: true,
+            daysOverdue: true,
+            createdAt: true,
+            updatedAt: true,
+            deletedAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return loans;
+  }
+
   async getAllLoans(userId: string, page: number = 1, limit: number = 10) {
     const skip = (page - 1) * limit;
 
@@ -195,7 +270,31 @@ export class LoansService {
           },
         },
       },
-      include: {
+      select: {
+        id: true,
+        clientId: true,
+        amount: true,
+        status: true,
+        requestDate: true,
+        approvedDate: true,
+        completedDate: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+        deletedAt: true,
+        baseInterestRate: true,
+        currency: true,
+        firstDueDate: true,
+        notes: true,
+        paymentDay: true,
+        paymentFrequency: true,
+        penaltyInterestRate: true,
+        totalPayments: true,
+        loanTrack: true,
+        prefix: true,
+        year: true,
+        sequence: true,
+        originalAmount: true,
         client: {
           select: {
             id: true,
@@ -208,10 +307,18 @@ export class LoansService {
           where: { deletedAt: null },
           select: {
             id: true,
+            loanId: true,
             paymentNumber: true,
-            status: true,
             amount: true,
             totalAmount: true,
+            status: true,
+            dueDate: true,
+            paidDate: true,
+            paidAmount: true,
+            daysOverdue: true,
+            createdAt: true,
+            updatedAt: true,
+            deletedAt: true,
           },
         },
       },

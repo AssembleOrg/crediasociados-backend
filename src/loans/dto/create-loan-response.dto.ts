@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { ToNumber, ToNumberArray, ToNumberObject } from '../../common/transformers/decimal.transformer';
 
 export class CreateLoanResponseDto {
   @ApiProperty({ example: 'loan_id_here' })
@@ -8,6 +9,7 @@ export class CreateLoanResponseDto {
   loanTrack: string;
 
   @ApiProperty({ example: 100000.0 })
+  @ToNumber()
   amount: number;
 
   @ApiProperty({ example: 'ARS' })
@@ -26,19 +28,43 @@ export class CreateLoanResponseDto {
   firstDueDate?: string;
 
   @ApiProperty({ example: 15.0 })
+  @ToNumber()
   baseInterestRate: number;
 
   @ApiProperty({ example: 35.0 })
+  @ToNumber()
   penaltyInterestRate: number;
+
+  @ApiProperty({ example: 100000.0 })
+  @ToNumber()
+  originalAmount: number;
 
   @ApiProperty({ example: 'Business expansion loan' })
   description?: string;
 
   @ApiProperty({ example: 'Client requested weekly payments on Fridays' })
   notes?: string;
+  
+  @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
+  requestedDueDate?: string;
+
+  @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
+  requestDate?: string;
+  
+  @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
+  updatedAt?: string;
 
   @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
   createdAt: string;
+
+  @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
+  deletedAt?: string;
+
+  @ApiProperty({ example: 'client_id' })
+  clientId: string;
+
+  @ApiProperty({ example: 'PENDING' })
+  status: string;
 
   @ApiProperty({
     example: {
@@ -86,6 +112,7 @@ export class CreateLoanResponseDto {
     ],
     description: 'SubLoans generados automáticamente basados en totalPayments',
   })
+  @ToNumberArray(['amount', 'totalAmount', 'paidAmount'])
   subLoans: Array<{
     id: string;
     paymentNumber: number;

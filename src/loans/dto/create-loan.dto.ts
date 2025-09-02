@@ -6,6 +6,7 @@ import {
   IsPositive,
   IsDateString,
   IsNotEmpty,
+  Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
@@ -33,7 +34,7 @@ export class CreateLoanDto {
 
   @ApiProperty({ example: 0.05 })
   @Type(() => Number)
-  @IsPositive()
+  @Min(0)
   penaltyInterestRate: number;
 
   @ApiPropertyOptional({ enum: Currency, example: Currency.ARS })

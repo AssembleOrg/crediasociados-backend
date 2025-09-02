@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { PaymentFrequency, PaymentDay } from '../common/enums';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class SubLoanGeneratorService {
@@ -14,8 +15,12 @@ export class SubLoanGeneratorService {
     loanId: string,
     loanData: CreateLoanDto,
     firstDueDate?: Date,
+    prismaTransaction?: Prisma.TransactionClient,
   ): Promise<void> {
     const { totalPayments, paymentFrequency, paymentDay, amount } = loanData;
+
+    // Use transaction instance if provided, otherwise use the service's prisma instance
+    const prismaClient = prismaTransaction || this.prisma;
 
     // Calcular monto por SubLoan
     const amountPerSubLoan = Number(amount) / totalPayments;
@@ -33,7 +38,7 @@ export class SubLoanGeneratorService {
       loanId,
       paymentNumber: index + 1,
       amount: amountPerSubLoan,
-      totalAmount: amountPerSubLoan, // Sin interés individual
+      totalAmount: amountPerSubLoan,
       status: 'PENDING' as const,
       dueDate,
       paidAmount: 0,
@@ -41,7 +46,7 @@ export class SubLoanGeneratorService {
     }));
 
     // Crear todos los SubLoans en una sola operación
-    await this.prisma.subLoan.createMany({
+    await prismaClient.subLoan.createMany({
       data: subLoansData,
     });
   }
@@ -58,37 +63,47 @@ export class SubLoanGeneratorService {
     const dueDates: Date[] = [];
     let currentDate = firstDueDate || new Date();
 
-    // Si no hay fecha específica, usar la fecha actual
-    if (!firstDueDate) {
-      currentDate = new Date();
-    }
-
     for (let i = 0; i < totalPayments; i++) {
-      const dueDate = new Date(currentDate);
+      let dueDate: Date;
 
-      // Ajustar la fecha según la frecuencia de pago
-      switch (paymentFrequency) {
-        case PaymentFrequency.DAILY:
-          dueDate.setDate(dueDate.getDate() + i);
-          break;
+      if (i === 0 && firstDueDate) {
+        // Para el primer pago, usar la fecha exacta proporcionada
+        dueDate = new Date(firstDueDate);
+      } else {
+        // Para pagos subsecuentes, calcular basado en la frecuencia
+        dueDate = new Date(currentDate);
 
-        case PaymentFrequency.WEEKLY:
-          dueDate.setDate(dueDate.getDate() + i * 7);
-          break;
+        // Ajustar la fecha según la frecuencia de pago
+        switch (paymentFrequency) {
+          case PaymentFrequency.DAILY:
+            dueDate.setDate(dueDate.getDate() + i);
+            break;
 
-        case PaymentFrequency.BIWEEKLY:
-          dueDate.setDate(dueDate.getDate() + i * 14);
-          break;
+          case PaymentFrequency.WEEKLY:
+            dueDate.setDate(dueDate.getDate() + i * 7);
+            break;
 
-        case PaymentFrequency.MONTHLY:
-          dueDate.setMonth(dueDate.getMonth() + i);
-          break;
+          case PaymentFrequency.BIWEEKLY:
+            dueDate.setDate(dueDate.getDate() + i * 14);
+            break;
+
+          case PaymentFrequency.MONTHLY:
+            dueDate.setMonth(dueDate.getMonth() + i);
+            break;
+        }
+
+        // Si hay un día específico de pago, ajustar la fecha al día correcto de la semana
+        // Solo para pagos subsecuentes (no para el primer pago si se proporciona firstDueDate)
+        if (paymentDay && !(i === 0 && firstDueDate)) {
+          this.setToDayOfWeek(dueDate, paymentDay);
+        }
       }
 
-      // Si hay un día específico de pago, ajustar la fecha
-      if (paymentDay) {
-        dueDate.setDate(this.getDayOfWeek(paymentDay));
-      }
+      // Verificar si la fecha cae en domingo y ajustarla al lunes siguiente
+      dueDate = this.adjustSundayToMonday(dueDate);
+
+      // Verificar que no haya fechas duplicadas
+      dueDate = this.ensureUniqueDate(dueDate, dueDates);
 
       dueDates.push(dueDate);
     }
@@ -97,9 +112,28 @@ export class SubLoanGeneratorService {
   }
 
   /**
-   * Convierte PaymentDay enum a número de día de la semana (1-7)
+   * Ajusta la fecha al día específico de la semana
    */
-  private getDayOfWeek(paymentDay: PaymentDay): number {
+  private setToDayOfWeek(date: Date, paymentDay: PaymentDay): void {
+    const targetDay = this.getDayOfWeekNumber(paymentDay);
+    const currentDay = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    
+    // Convert to our system where 1 = Monday, 2 = Tuesday, ..., 6 = Saturday, 0 = Sunday
+    const currentDayAdjusted = currentDay === 0 ? 7 : currentDay;
+    
+    // Calculate the difference and adjust
+    let daysToAdd = targetDay - currentDayAdjusted;
+    if (daysToAdd < 0) {
+      daysToAdd += 7; // Move to next week
+    }
+    
+    date.setDate(date.getDate() + daysToAdd);
+  }
+
+  /**
+   * Convierte PaymentDay enum a número de día de la semana (1-7, where 1=Monday, 7=Sunday)
+   */
+  private getDayOfWeekNumber(paymentDay: PaymentDay): number {
     const dayMap = {
       [PaymentDay.MONDAY]: 1,
       [PaymentDay.TUESDAY]: 2,
@@ -110,5 +144,45 @@ export class SubLoanGeneratorService {
     };
 
     return dayMap[paymentDay];
+  }
+
+  /**
+   * Ajusta una fecha que cae en domingo al lunes siguiente
+   */
+  private adjustSundayToMonday(date: Date): Date {
+    const adjustedDate = new Date(date);
+    
+    // Si la fecha cae en domingo (day = 0), moverla al lunes siguiente
+    if (adjustedDate.getDay() === 0) {
+      adjustedDate.setDate(adjustedDate.getDate() + 1);
+    }
+    
+    return adjustedDate;
+  }
+
+  /**
+   * Asegura que la fecha sea única comparándola con las fechas existentes
+   */
+  private ensureUniqueDate(newDate: Date, existingDates: Date[]): Date {
+    let adjustedDate = new Date(newDate);
+    
+    // Verificar si la fecha ya existe
+    while (this.isDateInArray(adjustedDate, existingDates)) {
+      // Si la fecha ya existe, moverla al día siguiente
+      adjustedDate.setDate(adjustedDate.getDate() + 1);
+      
+      // Verificar nuevamente si el nuevo día es domingo y ajustarlo
+      adjustedDate = this.adjustSundayToMonday(adjustedDate);
+    }
+    
+    return adjustedDate;
+  }
+
+  /**
+   * Verifica si una fecha ya existe en el array de fechas
+   */
+  private isDateInArray(date: Date, dateArray: Date[]): boolean {
+    const dateString = date.toDateString();
+    return dateArray.some(existingDate => existingDate.toDateString() === dateString);
   }
 }

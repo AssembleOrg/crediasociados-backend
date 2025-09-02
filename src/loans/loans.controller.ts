@@ -16,12 +16,15 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Type, plainToClass } from 'class-transformer';
 import { LoansService } from './loans.service';
 import {
   CreateLoanDto,
   LoanTrackingResponseDto,
   CreateLoanResponseDto,
+  LoanListResponseDto,
 } from './dto';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -47,7 +50,30 @@ export class LoansController {
   @ApiResponse({ status: 401, description: 'No autorizado' })
   @ApiResponse({ status: 403, description: 'Prohibido - Rol insuficiente' })
   async createLoan(@Body() createLoanDto: CreateLoanDto, @Request() req) {
-    return this.loansService.createLoan(createLoanDto, req.user.id);
+    const result = await this.loansService.createLoan(createLoanDto, req.user.id);
+    
+    if (!result) {
+      throw new BadRequestException('Error al crear el préstamo');
+    }
+    
+    // Manual transformation to avoid class-transformer issues
+    const transformedResult = {
+      ...result,
+      // Transform numeric fields manually
+      amount: result.amount ? Number(result.amount) : result.amount,
+      baseInterestRate: result.baseInterestRate ? Number(result.baseInterestRate) : result.baseInterestRate,
+      penaltyInterestRate: result.penaltyInterestRate ? Number(result.penaltyInterestRate) : result.penaltyInterestRate,
+      originalAmount: result.originalAmount ? Number(result.originalAmount) : result.originalAmount,
+      // Transform subLoans
+      subLoans: result.subLoans?.map(subLoan => ({
+        ...subLoan,
+        amount: subLoan.amount ? Number(subLoan.amount) : subLoan.amount,
+        totalAmount: subLoan.totalAmount ? Number(subLoan.totalAmount) : subLoan.totalAmount,
+        paidAmount: subLoan.paidAmount ? Number(subLoan.paidAmount) : subLoan.paidAmount,
+      })) || []
+    };
+    
+    return transformedResult;
   }
 
   @Get('tracking')
@@ -92,7 +118,7 @@ export class LoansController {
     return this.loansService.getLoanByTracking(dni, tracking);
   }
 
-  @Get()
+    @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(
     UserRole.MANAGER,
@@ -102,7 +128,51 @@ export class LoansController {
   )
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Obtener todos los préstamos del usuario autenticado',
+    summary: 'Obtener todos los préstamos activos del usuario autenticado',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Préstamos activos obtenidos exitosamente',
+    type: [LoanListResponseDto]
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getAllActiveLoans(@Request() req) {
+    const loans = await this.loansService.getAllActiveLoans(req.user.id);
+    
+    // Manual transformation to avoid class-transformer issues
+    const transformedLoans = loans.map(loan => {
+      const transformedLoan = {
+        ...loan,
+        // Transform numeric fields manually
+        amount: loan.amount ? Number(loan.amount) : loan.amount,
+        baseInterestRate: loan.baseInterestRate ? Number(loan.baseInterestRate) : loan.baseInterestRate,
+        penaltyInterestRate: loan.penaltyInterestRate ? Number(loan.penaltyInterestRate) : loan.penaltyInterestRate,
+        originalAmount: loan.originalAmount ? Number(loan.originalAmount) : loan.originalAmount,
+        // Transform subLoans
+        subLoans: loan.subLoans?.map(subLoan => ({
+          ...subLoan,
+          amount: subLoan.amount ? Number(subLoan.amount) : subLoan.amount,
+          totalAmount: subLoan.totalAmount ? Number(subLoan.totalAmount) : subLoan.totalAmount,
+          paidAmount: subLoan.paidAmount ? Number(subLoan.paidAmount) : subLoan.paidAmount,
+        })) || []
+      };
+      return transformedLoan;
+    });
+    
+    return transformedLoans;
+  }
+
+  @Get('pagination')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.MANAGER,
+    UserRole.SUBADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPERADMIN,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener préstamos paginados del usuario autenticado',
   })
   @ApiQuery({
     name: 'page',
@@ -116,14 +186,43 @@ export class LoansController {
     description: 'Elementos por página',
     example: 10,
   })
-  @ApiResponse({ status: 200, description: 'Préstamos obtenidos exitosamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Préstamos paginados obtenidos exitosamente',
+    type: PaginatedResponseDto<LoanListResponseDto>
+  })
   @ApiResponse({ status: 401, description: 'No autorizado' })
-  async getAllLoans(
+  async getPaginatedLoans(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
     @Request() req,
   ) {
-    return this.loansService.getAllLoans(req.user.id, page, limit);
+    const result = await this.loansService.getAllLoans(req.user.id, page, limit);
+    
+    // Manual transformation to avoid class-transformer issues
+    const transformedLoans = result.data.map(loan => {
+      const transformedLoan = {
+        ...loan,
+        // Transform numeric fields manually
+        amount: loan.amount ? Number(loan.amount) : loan.amount,
+        baseInterestRate: loan.baseInterestRate ? Number(loan.baseInterestRate) : loan.baseInterestRate,
+        penaltyInterestRate: loan.penaltyInterestRate ? Number(loan.penaltyInterestRate) : loan.penaltyInterestRate,
+        originalAmount: loan.originalAmount ? Number(loan.originalAmount) : loan.originalAmount,
+        // Transform subLoans
+        subLoans: loan.subLoans?.map(subLoan => ({
+          ...subLoan,
+          amount: subLoan.amount ? Number(subLoan.amount) : subLoan.amount,
+          totalAmount: subLoan.totalAmount ? Number(subLoan.totalAmount) : subLoan.totalAmount,
+          paidAmount: subLoan.paidAmount ? Number(subLoan.paidAmount) : subLoan.paidAmount,
+        })) || []
+      };
+      return transformedLoan;
+    });
+    
+    return {
+      data: transformedLoans,
+      meta: result.meta
+    };
   }
 
   @Get(':id')
