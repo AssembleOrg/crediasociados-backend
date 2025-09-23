@@ -1,4 +1,5 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { DateUtil } from './date.util';
 
 export class TrackingCodeUtil {
   /**
@@ -8,16 +9,11 @@ export class TrackingCodeUtil {
    * Este método es a prueba de concurrencia usando transacciones atómicas
    */
   static async generateSequentialTrackingCode(
-    prisma: PrismaService,
-    prefix: string = 'CREDITO',
-  ): Promise<{
-    trackingCode: string;
-    prefix: string;
-    year: number;
-    sequence: number;
-  }> {
-    const currentYear = new Date().getFullYear();
-
+    prisma: PrismaService, 
+    prefix: string = 'CREDITO'
+  ): Promise<{ trackingCode: string; prefix: string; year: number; sequence: number }> {
+    const currentYear = DateUtil.now().year;
+    
     // Usar transacción atómica para generar la secuencia
     const result = await prisma.$transaction(async (tx) => {
       // Crear o tomar el contador de secuencia

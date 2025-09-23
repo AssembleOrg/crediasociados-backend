@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
+import { DateUtil } from '../utils';
 
 export interface Response<T> {
   data: T;
@@ -25,7 +26,7 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, Response<T>> {
         data,
         message: 'Success',
         success: true,
-        timestamp: new Date().toISOString(),
+        timestamp: DateUtil.now().toISO() || new Date().toISOString(),
       })),
     );
   }

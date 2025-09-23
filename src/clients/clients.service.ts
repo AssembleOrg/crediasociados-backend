@@ -9,7 +9,8 @@ import { CreateClientDto, UpdateClientDto } from './dto';
 import { UserRole } from 'src/common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
-import { ClientManager } from '../common/types/client-manager.interface';
+import { DateUtil } from '../common/utils';
+import { ClientManager } from '@prisma/client';
 
 @Injectable()
 export class ClientsService {
@@ -334,13 +335,13 @@ export class ClientsService {
     // Soft delete del cliente
     await this.prisma.client.update({
       where: { id },
-      data: { deletedAt: new Date() },
+      data: { deletedAt: DateUtil.now().toJSDate() },
     });
 
     // Soft delete de la relación client-manager
     await this.prisma.clientManager.update({
       where: { id: clientManager.id },
-      data: { deletedAt: new Date() },
+      data: { deletedAt: DateUtil.now().toJSDate() },
     });
 
     return { message: 'Cliente eliminado exitosamente' };

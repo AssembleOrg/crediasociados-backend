@@ -18,18 +18,14 @@ import {
 } from '@nestjs/swagger';
 import { Type, plainToClass } from 'class-transformer';
 import { LoansService } from './loans.service';
-import {
-  CreateLoanDto,
-  LoanTrackingResponseDto,
-  CreateLoanResponseDto,
-  LoanListResponseDto,
-} from './dto';
-import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { CreateLoanDto, LoanTrackingResponseDto, CreateLoanResponseDto, LoanListResponseDto } from './dto';
+import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { Public } from '../common/decorators/public.decorator';
+import { PaginatedResponseDto } from 'src/common/dto/paginated-response.dto';
 
 @ApiTags('Loans')
 @Controller('loans')
@@ -127,14 +123,20 @@ export class LoansController {
     UserRole.SUPERADMIN,
   )
   @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Obtener todos los préstamos activos del usuario autenticado',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Préstamos activos obtenidos exitosamente',
-    type: [LoanListResponseDto]
-  })
+  @ApiOperation({ summary: 'Obtener todos los préstamos con filtros y paginación' })
+  @ApiQuery({ name: 'page', required: false, description: 'Número de página', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Elementos por página', example: 10 })
+  @ApiQuery({ name: 'managerId', required: false, type: String, description: 'ID del manager', example: 'manager_id_here' })
+  @ApiQuery({ name: 'clientId', required: false, type: String, description: 'ID del cliente', example: 'client_id_here' })
+  @ApiQuery({ name: 'loanTrack', required: false, type: String, description: 'Código de tracking del préstamo', example: 'LOAN-2024-001' })
+  @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED', 'OVERDUE'], description: 'Estado del préstamo', example: 'ACTIVE' })
+  @ApiQuery({ name: 'currency', required: false, enum: ['ARS', 'USD'], description: 'Moneda del préstamo', example: 'ARS' })
+  @ApiQuery({ name: 'paymentFrequency', required: false, enum: ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY'], description: 'Frecuencia de pago', example: 'WEEKLY' })
+  @ApiQuery({ name: 'minAmount', required: false, type: Number, description: 'Monto mínimo', example: 10000 })
+  @ApiQuery({ name: 'maxAmount', required: false, type: Number, description: 'Monto máximo', example: 100000 })
+  @ApiQuery({ name: 'createdFrom', required: false, type: String, description: 'Fecha de creación desde', example: '2024-01-01T00:00:00.000Z' })
+  @ApiQuery({ name: 'createdTo', required: false, type: String, description: 'Fecha de creación hasta', example: '2024-12-31T23:59:59.000Z' })
+  @ApiResponse({ status: 200, description: 'Préstamos obtenidos exitosamente' })
   @ApiResponse({ status: 401, description: 'No autorizado' })
   async getAllActiveLoans(@Request() req) {
     const loans = await this.loansService.getAllActiveLoans(req.user.id);
@@ -195,34 +197,38 @@ export class LoansController {
   async getPaginatedLoans(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
+    @Query() filters: LoanFiltersDto,
     @Request() req,
   ) {
-    const result = await this.loansService.getAllLoans(req.user.id, page, limit);
-    
-    // Manual transformation to avoid class-transformer issues
-    const transformedLoans = result.data.map(loan => {
-      const transformedLoan = {
-        ...loan,
-        // Transform numeric fields manually
-        amount: loan.amount ? Number(loan.amount) : loan.amount,
-        baseInterestRate: loan.baseInterestRate ? Number(loan.baseInterestRate) : loan.baseInterestRate,
-        penaltyInterestRate: loan.penaltyInterestRate ? Number(loan.penaltyInterestRate) : loan.penaltyInterestRate,
-        originalAmount: loan.originalAmount ? Number(loan.originalAmount) : loan.originalAmount,
-        // Transform subLoans
-        subLoans: loan.subLoans?.map(subLoan => ({
-          ...subLoan,
-          amount: subLoan.amount ? Number(subLoan.amount) : subLoan.amount,
-          totalAmount: subLoan.totalAmount ? Number(subLoan.totalAmount) : subLoan.totalAmount,
-          paidAmount: subLoan.paidAmount ? Number(subLoan.paidAmount) : subLoan.paidAmount,
-        })) || []
-      };
-      return transformedLoan;
-    });
-    
-    return {
-      data: transformedLoans,
-      meta: result.meta
-    };
+    return this.loansService.getAllLoansWithFilters(req.user.id, req.user.role, page, limit, filters);
+  }
+
+  @Get('chart')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtener datos de préstamos para gráficos (sin paginación, datos reducidos)' })
+  @ApiQuery({ name: 'managerId', required: false, type: String, description: 'ID del manager', example: 'manager_id_here' })
+  @ApiQuery({ name: 'clientId', required: false, type: String, description: 'ID del cliente', example: 'client_id_here' })
+  @ApiQuery({ name: 'loanTrack', required: false, type: String, description: 'Código de tracking del préstamo', example: 'LOAN-2024-001' })
+  @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED', 'OVERDUE'], description: 'Estado del préstamo', example: 'ACTIVE' })
+  @ApiQuery({ name: 'currency', required: false, enum: ['ARS', 'USD'], description: 'Moneda del préstamo', example: 'ARS' })
+  @ApiQuery({ name: 'paymentFrequency', required: false, enum: ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY'], description: 'Frecuencia de pago', example: 'WEEKLY' })
+  @ApiQuery({ name: 'minAmount', required: false, type: Number, description: 'Monto mínimo', example: 10000 })
+  @ApiQuery({ name: 'maxAmount', required: false, type: Number, description: 'Monto máximo', example: 100000 })
+  @ApiQuery({ name: 'createdFrom', required: false, type: String, description: 'Fecha de creación desde', example: '2024-01-01T00:00:00.000Z' })
+  @ApiQuery({ name: 'createdTo', required: false, type: String, description: 'Fecha de creación hasta', example: '2024-12-31T23:59:59.000Z' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Datos de préstamos para gráficos obtenidos exitosamente',
+    type: [LoanChartDataDto]
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getLoansChart(
+    @Query() filters: LoanFiltersDto,
+    @Request() req,
+  ): Promise<LoanChartDataDto[]> {
+    return this.loansService.getLoansChart(req.user.id, req.user.role, filters);
   }
 
   @Get(':id')

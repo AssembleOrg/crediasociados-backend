@@ -5,8 +5,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
-import { TrackingCodeUtil } from '../common/utils/tracking-code.util';
+import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
+import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
+import { Prisma, UserRole } from '@prisma/client';
 import { LoanStatus } from 'src/common/enums';
 
 @Injectable()
@@ -68,11 +70,11 @@ export class LoansService {
       const parts = loanTrack.split('-');
       if (parts.length >= 3) {
         prefix = parts[0];
-        year = parseInt(parts[1]) || new Date().getFullYear();
+        year = parseInt(parts[1]) || DateUtil.now().year;
         sequence = parseInt(parts[2]) || 0;
       } else {
         prefix = 'CUSTOM';
-        year = new Date().getFullYear();
+        year = DateUtil.now().year;
         sequence = 0;
       }
     }
@@ -90,9 +92,7 @@ export class LoansService {
           paymentDay: createLoanDto.paymentDay,
           status: LoanStatus.ACTIVE,
           totalPayments: createLoanDto.totalPayments,
-          firstDueDate: createLoanDto.firstDueDate
-            ? new Date(createLoanDto.firstDueDate)
-            : null,
+          firstDueDate: createLoanDto.firstDueDate ? DateUtil.parseToDate(createLoanDto.firstDueDate) : null,
           loanTrack: loanTrack,
           prefix: prefix,
           year: year,
@@ -111,10 +111,8 @@ export class LoansService {
       await this.subLoanGenerator.generateSubLoans(
         loan.id,
         createLoanDto,
-        createLoanDto.firstDueDate
-          ? new Date(createLoanDto.firstDueDate)
-          : undefined,
-        prisma, // Pass the transaction's prisma instance
+        createLoanDto.firstDueDate ? DateUtil.parseToDate(createLoanDto.firstDueDate) : undefined,
+        prisma
       );
 
       // Obtener el loan con los subloans generados
@@ -397,4 +395,331 @@ export class LoansService {
 
     return loan;
   }
-}
+
+  async getAllLoansWithFilters(
+    userId: string,
+    userRole: UserRole,
+    page: number = 1,
+    limit: number = 10,
+    filters: LoanFiltersDto,
+  ) {
+    const skip = (page - 1) * limit;
+
+    // Construir whereClause basado en el rol del usuario
+    let whereClause: any = {
+      deletedAt: null,
+    };
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus clientes
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: userId,
+            deletedAt: null,
+          },
+        },
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: clientes de sus managers
+      const managedUserIds = await this.getManagedUserIds(userId);
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: { in: managedUserIds },
+            deletedAt: null,
+          },
+        },
+      };
+    }
+    // ADMIN y SUPERADMIN ven todos los préstamos
+
+    // Aplicar filtros adicionales
+    if (filters.managerId) {
+      whereClause.client = {
+        ...whereClause.client,
+        managers: {
+          some: {
+            userId: filters.managerId,
+            deletedAt: null,
+          },
+        },
+      };
+    }
+
+    if (filters.clientId) {
+      whereClause.clientId = filters.clientId;
+    }
+
+    if (filters.loanTrack) {
+      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+    }
+
+    if (filters.status) {
+      whereClause.status = filters.status;
+    }
+
+    if (filters.currency) {
+      whereClause.currency = filters.currency;
+    }
+
+    if (filters.paymentFrequency) {
+      whereClause.paymentFrequency = filters.paymentFrequency;
+    }
+
+    if (filters.minAmount || filters.maxAmount) {
+      whereClause.amount = {};
+      if (filters.minAmount) {
+        whereClause.amount.gte = filters.minAmount;
+      }
+      if (filters.maxAmount) {
+        whereClause.amount.lte = filters.maxAmount;
+      }
+    }
+
+    if (filters.createdFrom || filters.createdTo) {
+      whereClause.createdAt = {};
+      if (filters.createdFrom) {
+        whereClause.createdAt.gte = DateUtil.parseToDate(filters.createdFrom);
+      }
+      if (filters.createdTo) {
+        whereClause.createdAt.lte = DateUtil.parseToDate(filters.createdTo);
+      }
+    }
+
+    if (filters.dueDateFrom || filters.dueDateTo) {
+      whereClause.subLoans = {
+        some: {
+          deletedAt: null,
+          ...(filters.dueDateFrom || filters.dueDateTo ? {
+            dueDate: {
+              ...(filters.dueDateFrom ? { gte: DateUtil.parseToDate(filters.dueDateFrom) } : {}),
+              ...(filters.dueDateTo ? { lte: DateUtil.parseToDate(filters.dueDateTo) } : {}),
+            }
+          } : {})
+        }
+      };
+    }
+
+    const [loans, total] = await Promise.all([
+      this.prisma.loan.findMany({
+        where: whereClause,
+        include: {
+          client: {
+            select: {
+              id: true,
+              fullName: true,
+              dni: true,
+              cuit: true,
+            },
+          },
+          subLoans: {
+            where: { deletedAt: null },
+            select: {
+              id: true,
+              paymentNumber: true,
+              status: true,
+              amount: true,
+              totalAmount: true,
+              dueDate: true,
+              paidAmount: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.loan.count({ where: whereClause }),
+    ]);
+
+    return {
+      data: loans,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPreviousPage: page > 1,
+      },
+    };
+  }
+
+  async getLoansChart(
+    userId: string,
+    userRole: UserRole,
+    filters: LoanFiltersDto,
+  ): Promise<LoanChartDataDto[]> {
+    // Construir whereClause basado en el rol del usuario (mismo que arriba pero sin paginación)
+    let whereClause: any = {
+      deletedAt: null,
+    };
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: userId,
+            deletedAt: null,
+          },
+        },
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      const managedUserIds = await this.getManagedUserIds(userId);
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: { in: managedUserIds },
+            deletedAt: null,
+          },
+        },
+      };
+    }
+
+    // Aplicar filtros adicionales
+    if (filters.managerId) {
+      whereClause.client = {
+        ...whereClause.client,
+        managers: {
+          some: {
+            userId: filters.managerId,
+            deletedAt: null,
+          },
+        },
+      };
+    }
+
+    if (filters.clientId) {
+      whereClause.clientId = filters.clientId;
+    }
+
+    if (filters.loanTrack) {
+      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+    }
+
+    if (filters.status) {
+      whereClause.status = filters.status;
+    }
+
+    if (filters.currency) {
+      whereClause.currency = filters.currency;
+    }
+
+    if (filters.paymentFrequency) {
+      whereClause.paymentFrequency = filters.paymentFrequency;
+    }
+
+    if (filters.minAmount || filters.maxAmount) {
+      whereClause.amount = {};
+      if (filters.minAmount) {
+        whereClause.amount.gte = filters.minAmount;
+      }
+      if (filters.maxAmount) {
+        whereClause.amount.lte = filters.maxAmount;
+      }
+    }
+
+    if (filters.createdFrom || filters.createdTo) {
+      whereClause.createdAt = {};
+      if (filters.createdFrom) {
+        whereClause.createdAt.gte = DateUtil.parseToDate(filters.createdFrom);
+      }
+      if (filters.createdTo) {
+        whereClause.createdAt.lte = DateUtil.parseToDate(filters.createdTo);
+      }
+    }
+
+    if (filters.dueDateFrom || filters.dueDateTo) {
+      whereClause.subLoans = {
+        some: {
+          deletedAt: null,
+          ...(filters.dueDateFrom || filters.dueDateTo ? {
+            dueDate: {
+              ...(filters.dueDateFrom ? { gte: DateUtil.parseToDate(filters.dueDateFrom) } : {}),
+              ...(filters.dueDateTo ? { lte: DateUtil.parseToDate(filters.dueDateTo) } : {}),
+            }
+          } : {})
+        }
+      };
+    }
+
+    const loans = await this.prisma.loan.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        loanTrack: true,
+        amount: true,
+        originalAmount: true,
+        status: true,
+        currency: true,
+        paymentFrequency: true,
+        totalPayments: true,
+        createdAt: true,
+        client: {
+          select: {
+            id: true,
+            fullName: true,
+            dni: true,
+          },
+        },
+        subLoans: {
+          where: { deletedAt: null },
+          select: {
+            status: true,
+            amount: true,
+            paidAmount: true,
+            dueDate: true,
+          },
+          orderBy: { paymentNumber: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return loans.map((loan) => {
+      const completedPayments = loan.subLoans.filter((sub) => sub.status === 'PAID').length;
+      const pendingPayments = loan.totalPayments - completedPayments;
+      const paidAmount = loan.subLoans.reduce((sum, sub) => sum + Number(sub.paidAmount || 0), 0);
+      const remainingAmount = Number(loan.amount) - paidAmount;
+      const nextDueDate = loan.subLoans
+        .filter((sub) => sub.status !== 'PAID')
+        .sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())[0]?.dueDate;
+
+      return {
+        id: loan.id,
+        loanTrack: loan.loanTrack,
+        amount: Number(loan.amount),
+        originalAmount: Number(loan.originalAmount),
+        status: loan.status,
+        currency: loan.currency,
+        paymentFrequency: loan.paymentFrequency,
+        totalPayments: loan.totalPayments,
+        completedPayments,
+        pendingPayments,
+        paidAmount,
+        remainingAmount,
+        createdAt: loan.createdAt,
+        nextDueDate,
+        client: {
+          ...loan.client,
+          dni: loan.client.dni ?? undefined,
+        },
+      };
+    });
+  }
+
+  private async getManagedUserIds(userId: string): Promise<string[]> {
+    const managedUsers = await this.prisma.user.findMany({
+      where: {
+        createdById: userId,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    return managedUsers.map((mu) => mu.id);
+  }
+} 
