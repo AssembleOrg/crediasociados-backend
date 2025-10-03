@@ -19,6 +19,7 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'https://crediasociados-backend.netlify.app', // Production frontend
+      'https://finanzas-demo.netlify.app/login',
       'http://localhost:3000', // Backend port
       'http://localhost:3001', // Alternative backend port
       'http://localhost:5173', // Vite default port
