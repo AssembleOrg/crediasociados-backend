@@ -8,20 +8,23 @@ datasource db {
 }
 
 model User {
-  id             String          @id @default(cuid())
-  email          String          @unique
-  password       String
-  phone          String?
-  fullName       String
-  role           UserRole        @default(MANAGER)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  deletedAt      DateTime?
-  createdById    String?
-  managedClients ClientManager[]
-  refreshTokens  RefreshToken[]
-  createdBy      User?           @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers   User[]          @relation("UserCreatedBy")
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  password           String
+  phone              String?
+  fullName           String
+  role               UserRole            @default(MANAGER)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+  createdById        String?
+  managedClients     ClientManager[]
+  refreshTokens      RefreshToken[]
+  wallet             Wallet?
+  dailyClosures      DailyClosure[]
+  walletTransactions WalletTransaction[]
+  createdBy          User?               @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers       User[]              @relation("UserCreatedBy")
 
   @@map("users")
 }
@@ -62,6 +65,7 @@ model ClientManager {
 model Loan {
   id                  String           @id @default(cuid())
   clientId            String
+  managerId           String?
   amount              Decimal          @db.Decimal(40, 2)
   status              LoanStatus       @default(PENDING)
   requestDate         DateTime         @default(now())
@@ -80,37 +84,39 @@ model Loan {
   penaltyInterestRate Decimal          @db.Decimal(5, 2)
   totalPayments       Int
   loanTrack           String           @unique
-  
+
   // Campos para secuencia atómica
-  prefix              String
-  year                Int
-  sequence            Int
-  
-  originalAmount      Decimal          @db.Decimal(40, 2)
-  client              Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  subLoans            SubLoan[]
-  transactions        Transaction[]
+  prefix   String
+  year     Int
+  sequence Int
+
+  originalAmount Decimal       @db.Decimal(40, 2)
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  subLoans       SubLoan[]
+  transactions   Transaction[]
 
   @@unique([prefix, year, sequence])
   @@map("loans")
 }
 
 model SubLoan {
-  id            String        @id @default(cuid())
-  loanId        String
-  paymentNumber Int
-  amount        Decimal       @db.Decimal(40, 2)
-  totalAmount   Decimal       @db.Decimal(40, 2)
-  status        SubLoanStatus @default(PENDING)
-  dueDate       DateTime
-  paidDate      DateTime?
-  paidAmount    Decimal       @default(0) @db.Decimal(40, 2)
-  daysOverdue   Int           @default(0)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  deletedAt     DateTime?
-  loan          Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  transactions  Transaction[]
+  id             String        @id @default(cuid())
+  loanId         String
+  paymentNumber  Int
+  amount         Decimal       @db.Decimal(40, 2)
+  totalAmount    Decimal       @db.Decimal(40, 2)
+  status         SubLoanStatus @default(PENDING)
+  dueDate        DateTime
+  paidDate       DateTime?
+  paidAmount     Decimal       @default(0) @db.Decimal(40, 2)
+  daysOverdue    Int           @default(0)
+  paymentHistory Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+  loan           Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  transactions   Transaction[]
+  payments       Payment[]
 
   @@unique([loanId, paymentNumber])
   @@map("sub_loans")
@@ -168,8 +174,8 @@ model SystemConfig {
 model LoanSequence {
   prefix String
   year   Int
-  next   Int @default(1)
-  
+  next   Int    @default(1)
+
   @@id([prefix, year])
   @@map("loan_sequences")
 }
@@ -239,4 +245,93 @@ enum SubLoanStatus {
 enum TransactionType {
   INCOME
   EXPENSE
+}
+
+model Wallet {
+  id           String              @id @default(cuid())
+  userId       String              @unique
+  balance      Decimal             @default(0) @db.Decimal(40, 2)
+  currency     Currency            @default(ARS)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id            String                @id @default(cuid())
+  walletId      String
+  userId        String
+  type          WalletTransactionType
+  amount        Decimal               @db.Decimal(40, 2)
+  currency      Currency              @default(ARS)
+  description   String
+  relatedUserId String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  wallet        Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_transactions")
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  subLoanId   String
+  amount      Decimal  @db.Decimal(40, 2)
+  currency    Currency @default(ARS)
+  paymentDate DateTime @default(now())
+  description String?
+  createdAt   DateTime @default(now())
+  subLoan     SubLoan  @relation(fields: [subLoanId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model DailyClosure {
+  id             String    @id @default(cuid())
+  userId         String
+  closureDate    DateTime
+  totalCollected Decimal   @default(0) @db.Decimal(40, 2)
+  totalExpenses  Decimal   @default(0) @db.Decimal(40, 2)
+  netAmount      Decimal   @default(0) @db.Decimal(40, 2)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses       Expense[]
+
+  @@unique([userId, closureDate])
+  @@map("daily_closures")
+}
+
+model Expense {
+  id             String          @id @default(cuid())
+  dailyClosureId String
+  category       ExpenseCategory
+  amount         Decimal         @db.Decimal(40, 2)
+  description    String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  dailyClosure   DailyClosure    @relation(fields: [dailyClosureId], references: [id], onDelete: Cascade)
+
+  @@map("expenses")
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  LOAN_DISBURSEMENT
+  LOAN_PAYMENT
+  TRANSFER_TO_MANAGER
+  TRANSFER_FROM_SUBADMIN
+}
+
+enum ExpenseCategory {
+  COMBUSTIBLE
+  CONSUMO
+  REPARACIONES
+  OTROS
 }

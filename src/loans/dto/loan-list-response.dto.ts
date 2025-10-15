@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ToNumber, ToNumberArray } from '../../common/transformers/decimal.transformer';
+import {
+  ToNumber,
+  ToNumberArray,
+} from '../../common/transformers/decimal.transformer';
 import { SubLoanResponseDto } from './sub-loan-response.dto';
 
 export class ClientBasicInfoDto {

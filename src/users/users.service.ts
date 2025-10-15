@@ -8,9 +8,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
-import { ClientFiltersDto, LoanFiltersDto, ClientChartDataDto, LoanChartDataDto } from '../common/dto';
+import {
+  ClientFiltersDto,
+  LoanFiltersDto,
+  ClientChartDataDto,
+  LoanChartDataDto,
+} from '../common/dto';
 import { DateUtil } from '../common/utils';
 import { SystemConfigService } from '../system-config/system-config.service';
+import { WalletService } from '../wallet/wallet.service';
 import * as bcrypt from 'bcryptjs';
 import { UserRole, ConfigKey } from '../common/enums';
 import {
@@ -23,6 +29,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private systemConfigService: SystemConfigService,
+    private walletService: WalletService,
   ) {}
 
   async create(
@@ -60,6 +67,16 @@ export class UsersService {
         createdById: currentUser.id,
       },
     });
+
+    // NUEVO: Crear cartera automáticamente si es SUBADMIN o MANAGER
+    if (user.role === UserRole.SUBADMIN || user.role === UserRole.MANAGER) {
+      try {
+        await this.walletService.createWallet(user.id);
+      } catch (error) {
+        // Si falla la creación de la cartera, no bloqueamos la creación del usuario
+        console.error('Error creating wallet for user:', user.id, error);
+      }
+    }
 
     const { password, ...result } = user;
     return convertPrismaUserToResponse(result);
@@ -384,7 +401,10 @@ export class UsersService {
     };
 
     if (filters.fullName) {
-      whereClause.fullName = { contains: filters.fullName, mode: 'insensitive' };
+      whereClause.fullName = {
+        contains: filters.fullName,
+        mode: 'insensitive',
+      };
     }
     if (filters.dni) {
       whereClause.dni = { contains: filters.dni };
@@ -486,7 +506,10 @@ export class UsersService {
     };
 
     if (filters.fullName) {
-      whereClause.fullName = { contains: filters.fullName, mode: 'insensitive' };
+      whereClause.fullName = {
+        contains: filters.fullName,
+        mode: 'insensitive',
+      };
     }
     if (filters.dni) {
       whereClause.dni = { contains: filters.dni };
@@ -543,14 +566,22 @@ export class UsersService {
 
     return clients.map((client) => {
       const totalLoans = client.loans.length;
-      const activeLoans = client.loans.filter((loan) => loan.status === 'ACTIVE').length;
-      const totalAmount = client.loans.reduce((sum, loan) => sum + Number(loan.amount), 0);
+      const activeLoans = client.loans.filter(
+        (loan) => loan.status === 'ACTIVE',
+      ).length;
+      const totalAmount = client.loans.reduce(
+        (sum, loan) => sum + Number(loan.amount),
+        0,
+      );
       const activeAmount = client.loans
         .filter((loan) => loan.status === 'ACTIVE')
         .reduce((sum, loan) => sum + Number(loan.amount), 0);
-      const lastLoanDate = client.loans.length > 0 
-        ? client.loans.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0].createdAt
-        : undefined;
+      const lastLoanDate =
+        client.loans.length > 0
+          ? client.loans.sort(
+              (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+            )[0].createdAt
+          : undefined;
 
       return {
         id: client.id,
@@ -605,7 +636,10 @@ export class UsersService {
       whereClause.clientId = filters.clientId;
     }
     if (filters.loanTrack) {
-      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+      whereClause.loanTrack = {
+        contains: filters.loanTrack,
+        mode: 'insensitive',
+      };
     }
     if (filters.status) {
       whereClause.status = filters.status;
@@ -716,7 +750,10 @@ export class UsersService {
       whereClause.clientId = filters.clientId;
     }
     if (filters.loanTrack) {
-      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+      whereClause.loanTrack = {
+        contains: filters.loanTrack,
+        mode: 'insensitive',
+      };
     }
     if (filters.status) {
       whereClause.status = filters.status;
@@ -780,9 +817,14 @@ export class UsersService {
     });
 
     return loans.map((loan) => {
-      const completedPayments = loan.subLoans.filter((sub) => sub.status === 'PAID').length;
+      const completedPayments = loan.subLoans.filter(
+        (sub) => sub.status === 'PAID',
+      ).length;
       const pendingPayments = loan.totalPayments - completedPayments;
-      const paidAmount = loan.subLoans.reduce((sum, sub) => sum + Number(sub.paidAmount || 0), 0);
+      const paidAmount = loan.subLoans.reduce(
+        (sum, sub) => sum + Number(sub.paidAmount || 0),
+        0,
+      );
       const remainingAmount = Number(loan.amount) - paidAmount;
       const nextDueDate = loan.subLoans
         .filter((sub) => sub.status !== 'PAID')
@@ -811,9 +853,15 @@ export class UsersService {
     });
   }
 
-  private async validateManagerAccess(managerId: string, currentUser: any): Promise<void> {
+  private async validateManagerAccess(
+    managerId: string,
+    currentUser: any,
+  ): Promise<void> {
     // SUPERADMIN y ADMIN pueden acceder a cualquier manager
-    if (currentUser.role === UserRole.SUPERADMIN || currentUser.role === UserRole.ADMIN) {
+    if (
+      currentUser.role === UserRole.SUPERADMIN ||
+      currentUser.role === UserRole.ADMIN
+    ) {
       return;
     }
 
@@ -836,11 +884,13 @@ export class UsersService {
     // MANAGER solo puede acceder a sus propios datos
     if (currentUser.role === UserRole.MANAGER) {
       if (managerId !== currentUser.id) {
-        throw new ForbiddenException('No puede acceder a datos de otros managers');
+        throw new ForbiddenException(
+          'No puede acceder a datos de otros managers',
+        );
       }
       return;
     }
 
     throw new ForbiddenException('Acceso denegado');
   }
-} 
+}

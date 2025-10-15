@@ -14,6 +14,9 @@ import { LoansModule } from './loans/loans.module';
 import { ClientsModule } from './clients/clients.module';
 import { SubLoansModule } from './sub-loans/sub-loans.module';
 import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
+import { WalletModule } from './wallet/wallet.module';
+import { PaymentsModule } from './payments/payments.module';
+import { DailyClosureModule } from './daily-closure/daily-closure.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -41,6 +44,9 @@ import configuration from './config/configuration';
     ClientsModule,
     SubLoansModule,
     ScheduledTasksModule,
+    WalletModule,
+    PaymentsModule,
+    DailyClosureModule,
   ],
   controllers: [AppController],
   providers: [

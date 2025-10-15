@@ -5,10 +5,7 @@ import { ScheduledTasksController } from './scheduled-tasks.controller';
 import { SubLoansModule } from '../sub-loans/sub-loans.module';
 
 @Module({
-  imports: [
-    ScheduleModule.forRoot(),
-    SubLoansModule,
-  ],
+  imports: [ScheduleModule.forRoot(), SubLoansModule],
   controllers: [ScheduledTasksController],
   providers: [ScheduledTasksService],
   exports: [ScheduledTasksService],

@@ -1,7 +1,19 @@
-import { IsOptional, IsString, IsEnum, IsDateString, IsNumber, IsPositive } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsEnum,
+  IsDateString,
+  IsNumber,
+  IsPositive,
+} from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { UserRole, LoanStatus, PaymentFrequency, Currency } from '@prisma/client';
+import {
+  UserRole,
+  LoanStatus,
+  PaymentFrequency,
+  Currency,
+} from '@prisma/client';
 
 export class ClientFiltersDto {
   @ApiPropertyOptional({ example: 'John Doe' })
@@ -34,17 +46,19 @@ export class ClientFiltersDto {
   @IsString()
   job?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-01-01T00:00:00.000Z',
-    description: 'Fecha de creación desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de creación desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()
   createdFrom?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-12-31T23:59:59.000Z',
-    description: 'Fecha de creación hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de creación hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()
@@ -77,7 +91,10 @@ export class LoanFiltersDto {
   @IsEnum(Currency)
   currency?: Currency;
 
-  @ApiPropertyOptional({ enum: PaymentFrequency, example: PaymentFrequency.WEEKLY })
+  @ApiPropertyOptional({
+    enum: PaymentFrequency,
+    example: PaymentFrequency.WEEKLY,
+  })
   @IsOptional()
   @IsEnum(PaymentFrequency)
   paymentFrequency?: PaymentFrequency;
@@ -96,33 +113,37 @@ export class LoanFiltersDto {
   @IsPositive()
   maxAmount?: number;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-01-01T00:00:00.000Z',
-    description: 'Fecha de creación desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de creación desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()
   createdFrom?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-12-31T23:59:59.000Z',
-    description: 'Fecha de creación hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de creación hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()
   createdTo?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-01-01T00:00:00.000Z',
-    description: 'Fecha de vencimiento desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de vencimiento desde (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()
   dueDateFrom?: string;
 
-  @ApiPropertyOptional({ 
+  @ApiPropertyOptional({
     example: '2024-12-31T23:59:59.000Z',
-    description: 'Fecha de vencimiento hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de vencimiento hasta (ISO 8601 - se interpreta en zona horaria de Buenos Aires)',
   })
   @IsOptional()
   @IsDateString()

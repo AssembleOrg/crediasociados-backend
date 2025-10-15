@@ -18,15 +18,20 @@ export class ScheduledTasksService {
   })
   async activateTodayDueSubLoans() {
     try {
-      this.logger.log('Iniciando tarea programada: activar subloans que vencen hoy');
-      
+      this.logger.log(
+        'Iniciando tarea programada: activar subloans que vencen hoy',
+      );
+
       const result = await this.subLoansService.activateTodayDueSubLoans();
-      
+
       this.logger.log(`Tarea completada: ${result.message}`);
-      
+
       return result;
     } catch (error) {
-      this.logger.error('Error en tarea programada de activación de subloans:', error);
+      this.logger.error(
+        'Error en tarea programada de activación de subloans:',
+        error,
+      );
       throw error;
     }
   }
@@ -35,7 +40,9 @@ export class ScheduledTasksService {
    * Método para ejecutar manualmente la tarea (para testing)
    */
   async runActivateTodayDueSubLoansManually() {
-    this.logger.log('Ejecutando manualmente la tarea de activación de subloans');
+    this.logger.log(
+      'Ejecutando manualmente la tarea de activación de subloans',
+    );
     return this.activateTodayDueSubLoans();
   }
 }

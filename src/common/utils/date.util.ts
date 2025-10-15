@@ -60,7 +60,10 @@ export class DateUtil {
   /**
    * Formatea una fecha para mostrar en Buenos Aires
    */
-  static format(dateTime: DateTime, format: string = 'dd/MM/yyyy HH:mm'): string {
+  static format(
+    dateTime: DateTime,
+    format: string = 'dd/MM/yyyy HH:mm',
+  ): string {
     return dateTime.setZone(this.BUENOS_AIRES_TIMEZONE).toFormat(format);
   }
 
@@ -69,7 +72,9 @@ export class DateUtil {
    * Asegura que la fecha se interprete en zona horaria de Buenos Aires
    */
   static parseToDate(dateString: string): Date {
-    const dt = DateTime.fromISO(dateString, { zone: this.BUENOS_AIRES_TIMEZONE });
+    const dt = DateTime.fromISO(dateString, {
+      zone: this.BUENOS_AIRES_TIMEZONE,
+    });
     return dt.isValid ? dt.toJSDate() : new Date(dateString);
   }
 
@@ -131,30 +136,36 @@ export class DateUtil {
   /**
    * Añade tiempo a una fecha
    */
-  static plus(dateTime: DateTime, duration: { 
-    years?: number; 
-    months?: number; 
-    weeks?: number; 
-    days?: number; 
-    hours?: number; 
-    minutes?: number; 
-    seconds?: number; 
-  }): DateTime {
+  static plus(
+    dateTime: DateTime,
+    duration: {
+      years?: number;
+      months?: number;
+      weeks?: number;
+      days?: number;
+      hours?: number;
+      minutes?: number;
+      seconds?: number;
+    },
+  ): DateTime {
     return dateTime.plus(duration);
   }
 
   /**
    * Resta tiempo a una fecha
    */
-  static minus(dateTime: DateTime, duration: { 
-    years?: number; 
-    months?: number; 
-    weeks?: number; 
-    days?: number; 
-    hours?: number; 
-    minutes?: number; 
-    seconds?: number; 
-  }): DateTime {
+  static minus(
+    dateTime: DateTime,
+    duration: {
+      years?: number;
+      months?: number;
+      weeks?: number;
+      days?: number;
+      hours?: number;
+      minutes?: number;
+      seconds?: number;
+    },
+  ): DateTime {
     return dateTime.minus(duration);
   }
 
@@ -175,7 +186,11 @@ export class DateUtil {
   /**
    * Compara si una fecha está entre dos fechas
    */
-  static isBetween(dateTime: DateTime, start: DateTime, end: DateTime): boolean {
+  static isBetween(
+    dateTime: DateTime,
+    start: DateTime,
+    end: DateTime,
+  ): boolean {
     return dateTime >= start && dateTime <= end;
   }
 

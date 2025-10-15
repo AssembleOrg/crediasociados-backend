@@ -6,7 +6,13 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -29,7 +35,8 @@ export class SubLoansController {
   )
   @ApiOperation({
     summary: 'Obtener subloans que vencen hoy (paginado)',
-    description: 'Retorna todos los subloans que tienen fecha de vencimiento hoy (cualquier estado) con paginación',
+    description:
+      'Retorna todos los subloans que tienen fecha de vencimiento hoy (cualquier estado) con paginación',
   })
   @ApiQuery({
     name: 'page',
@@ -53,28 +60,44 @@ export class SubLoansController {
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
   ) {
-    const result = await this.subLoansService.getTodayDueSubLoans(req.user.id, page, limit);
-    
+    const result = await this.subLoansService.getTodayDueSubLoans(
+      req.user.id,
+      page,
+      limit,
+    );
+
     // Manual transformation to avoid class-transformer issues
-    const transformedSubLoans = result.data.map(subLoan => ({
+    const transformedSubLoans = result.data.map((subLoan) => ({
       ...subLoan,
       // Transform numeric fields manually
       amount: subLoan.amount ? Number(subLoan.amount) : subLoan.amount,
-      totalAmount: subLoan.totalAmount ? Number(subLoan.totalAmount) : subLoan.totalAmount,
-      paidAmount: subLoan.paidAmount ? Number(subLoan.paidAmount) : subLoan.paidAmount,
+      totalAmount: subLoan.totalAmount
+        ? Number(subLoan.totalAmount)
+        : subLoan.totalAmount,
+      paidAmount: subLoan.paidAmount
+        ? Number(subLoan.paidAmount)
+        : subLoan.paidAmount,
       loan: {
         ...subLoan.loan,
         // Transform loan numeric fields
-        amount: subLoan.loan.amount ? Number(subLoan.loan.amount) : subLoan.loan.amount,
-        baseInterestRate: subLoan.loan.baseInterestRate ? Number(subLoan.loan.baseInterestRate) : subLoan.loan.baseInterestRate,
-        penaltyInterestRate: subLoan.loan.penaltyInterestRate ? Number(subLoan.loan.penaltyInterestRate) : subLoan.loan.penaltyInterestRate,
-        originalAmount: subLoan.loan.originalAmount ? Number(subLoan.loan.originalAmount) : subLoan.loan.originalAmount,
-      }
+        amount: subLoan.loan.amount
+          ? Number(subLoan.loan.amount)
+          : subLoan.loan.amount,
+        baseInterestRate: subLoan.loan.baseInterestRate
+          ? Number(subLoan.loan.baseInterestRate)
+          : subLoan.loan.baseInterestRate,
+        penaltyInterestRate: subLoan.loan.penaltyInterestRate
+          ? Number(subLoan.loan.penaltyInterestRate)
+          : subLoan.loan.penaltyInterestRate,
+        originalAmount: subLoan.loan.originalAmount
+          ? Number(subLoan.loan.originalAmount)
+          : subLoan.loan.originalAmount,
+      },
     }));
-    
+
     return {
       data: transformedSubLoans,
-      meta: result.meta
+      meta: result.meta,
     };
   }
 
@@ -87,7 +110,8 @@ export class SubLoansController {
   )
   @ApiOperation({
     summary: 'Obtener estadísticas de subloans que vencen hoy',
-    description: 'Retorna estadísticas agrupadas por status de los subloans que vencen hoy',
+    description:
+      'Retorna estadísticas agrupadas por status de los subloans que vencen hoy',
   })
   @ApiResponse({
     status: 200,
@@ -95,28 +119,30 @@ export class SubLoansController {
   })
   @ApiResponse({ status: 401, description: 'No autorizado' })
   async getTodayDueSubLoansStats(@Request() req) {
-    const stats = await this.subLoansService.getTodayDueSubLoansStats(req.user.id);
-    
+    const stats = await this.subLoansService.getTodayDueSubLoansStats(
+      req.user.id,
+    );
+
     // Transform numeric fields in stats
-    const transformedStats = stats.map(stat => ({
+    const transformedStats = stats.map((stat) => ({
       ...stat,
       _sum: {
         amount: stat._sum.amount ? Number(stat._sum.amount) : stat._sum.amount,
-        totalAmount: stat._sum.totalAmount ? Number(stat._sum.totalAmount) : stat._sum.totalAmount,
-      }
+        totalAmount: stat._sum.totalAmount
+          ? Number(stat._sum.totalAmount)
+          : stat._sum.totalAmount,
+      },
     }));
-    
+
     return transformedStats;
   }
 
   @Post('activate-today-due')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.SUPERADMIN,
-  )
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({
     summary: 'Activar subloans que vencen hoy',
-    description: 'Cambia el status de subloans pendientes que vencen hoy a OVERDUE (solo para admins)',
+    description:
+      'Cambia el status de subloans pendientes que vencen hoy a OVERDUE (solo para admins)',
   })
   @ApiResponse({
     status: 200,

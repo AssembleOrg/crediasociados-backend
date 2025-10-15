@@ -16,24 +16,24 @@ export class ClientChartDataDto {
   @ApiProperty({ example: 3, type: Number })
   totalLoans: number;
 
-  @ApiProperty({ example: 250000.50, type: Number })
+  @ApiProperty({ example: 250000.5, type: Number })
   totalAmount: number;
 
   @ApiProperty({ example: 1, type: Number })
   activeLoans: number;
 
-  @ApiProperty({ example: 150000.00, type: Number })
+  @ApiProperty({ example: 150000.0, type: Number })
   activeAmount: number;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
-    description: 'Fecha de creación (zona horaria de Buenos Aires)' 
+    description: 'Fecha de creación (zona horaria de Buenos Aires)',
   })
   createdAt: Date;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: '2024-01-15T10:30:00.000Z',
-    description: 'Fecha del último préstamo (zona horaria de Buenos Aires)' 
+    description: 'Fecha del último préstamo (zona horaria de Buenos Aires)',
   })
   lastLoanDate?: Date;
 }
@@ -45,10 +45,10 @@ export class LoanChartDataDto {
   @ApiProperty({ example: 'LOAN-2024-001' })
   loanTrack: string;
 
-  @ApiProperty({ example: 100000.50, type: Number })
+  @ApiProperty({ example: 100000.5, type: Number })
   amount: number;
 
-  @ApiProperty({ example: 100000.50, type: Number })
+  @ApiProperty({ example: 100000.5, type: Number })
   originalAmount: number;
 
   @ApiProperty({ example: 'ACTIVE' })
@@ -69,21 +69,22 @@ export class LoanChartDataDto {
   @ApiProperty({ example: 4, type: Number })
   pendingPayments: number;
 
-  @ApiProperty({ example: 75000.00, type: Number })
+  @ApiProperty({ example: 75000.0, type: Number })
   paidAmount: number;
 
-  @ApiProperty({ example: 25000.50, type: Number })
+  @ApiProperty({ example: 25000.5, type: Number })
   remainingAmount: number;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
-    description: 'Fecha de creación del préstamo (zona horaria de Buenos Aires)' 
+    description:
+      'Fecha de creación del préstamo (zona horaria de Buenos Aires)',
   })
   createdAt: Date;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: '2024-03-15T00:00:00.000Z',
-    description: 'Próxima fecha de vencimiento (zona horaria de Buenos Aires)' 
+    description: 'Próxima fecha de vencimiento (zona horaria de Buenos Aires)',
   })
   nextDueDate?: Date;
 

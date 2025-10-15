@@ -8,7 +8,11 @@ export class SubLoansService {
   /**
    * Obtiene todos los subloans que vencen hoy (cualquier estado) con paginación
    */
-  async getTodayDueSubLoans(userId: string, page: number = 1, limit: number = 20) {
+  async getTodayDueSubLoans(
+    userId: string,
+    page: number = 1,
+    limit: number = 20,
+  ) {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Inicio del día
     const endOfDay = new Date(today);
@@ -125,7 +129,7 @@ export class SubLoansService {
     const updateResult = await this.prisma.subLoan.updateMany({
       where: {
         id: {
-          in: pendingSubLoans.map(subLoan => subLoan.id),
+          in: pendingSubLoans.map((subLoan) => subLoan.id),
         },
       },
       data: {
@@ -137,7 +141,7 @@ export class SubLoansService {
     return {
       message: `Se activaron ${updateResult.count} subloans que vencen hoy`,
       count: updateResult.count,
-      subLoanIds: pendingSubLoans.map(subLoan => subLoan.id),
+      subLoanIds: pendingSubLoans.map((subLoan) => subLoan.id),
     };
   }
 

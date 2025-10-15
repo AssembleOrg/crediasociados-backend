@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
-import { PaymentFrequency, PaymentDay, Prisma, SubLoanStatus } from '@prisma/client';
+import {
+  PaymentFrequency,
+  PaymentDay,
+  Prisma,
+  SubLoanStatus,
+} from '@prisma/client';
 import { DateUtil } from '../common/utils';
 
 @Injectable()
@@ -28,7 +33,7 @@ export class SubLoanGeneratorService {
     // Verificar que el loan existe antes de crear los subloans
     const existingLoan = await prismaClient.loan.findUnique({
       where: { id: loanId },
-      select: { id: true }
+      select: { id: true },
     });
 
     if (!existingLoan) {
@@ -85,7 +90,7 @@ export class SubLoanGeneratorService {
   ): Date[] {
     const dueDates: Date[] = [];
     let currentDate = firstDueDate || DateUtil.now().toJSDate();
-    
+
     // Si no hay fecha específica, usar la fecha actual
     if (!firstDueDate) {
       currentDate = DateUtil.now().toJSDate();
@@ -93,21 +98,21 @@ export class SubLoanGeneratorService {
 
     for (let i = 0; i < totalPayments; i++) {
       let dueDate = DateUtil.fromJSDate(currentDate).toJSDate();
-      
+
       // Ajustar la fecha según la frecuencia de pago
       switch (paymentFrequency) {
         case 'DAILY':
           dueDate.setDate(dueDate.getDate() + i);
           break;
-          
+
         case 'WEEKLY':
-          dueDate.setDate(dueDate.getDate() + (i * 7));
+          dueDate.setDate(dueDate.getDate() + i * 7);
           break;
-          
+
         case 'BIWEEKLY':
-          dueDate.setDate(dueDate.getDate() + (i * 14));
+          dueDate.setDate(dueDate.getDate() + i * 14);
           break;
-          
+
         case 'MONTHLY':
           dueDate.setMonth(dueDate.getMonth() + i);
           break;
@@ -131,16 +136,16 @@ export class SubLoanGeneratorService {
   private setToDayOfWeek(date: Date, paymentDay: PaymentDay): void {
     const targetDay = this.getDayOfWeekNumber(paymentDay);
     const currentDay = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    
+
     // Convert to our system where 1 = Monday, 2 = Tuesday, ..., 6 = Saturday, 0 = Sunday
     const currentDayAdjusted = currentDay === 0 ? 7 : currentDay;
-    
+
     // Calculate the difference and adjust
     let daysToAdd = targetDay - currentDayAdjusted;
     if (daysToAdd < 0) {
       daysToAdd += 7; // Move to next week
     }
-    
+
     date.setDate(date.getDate() + daysToAdd);
   }
 
@@ -165,12 +170,12 @@ export class SubLoanGeneratorService {
    */
   private adjustSundayToMonday(date: Date): Date {
     const adjustedDate = new Date(date);
-    
+
     // Si la fecha cae en domingo (day = 0), moverla al lunes siguiente
     if (adjustedDate.getDay() === 0) {
       adjustedDate.setDate(adjustedDate.getDate() + 1);
     }
-    
+
     return adjustedDate;
   }
 
@@ -179,16 +184,16 @@ export class SubLoanGeneratorService {
    */
   private ensureUniqueDate(newDate: Date, existingDates: Date[]): Date {
     let adjustedDate = new Date(newDate);
-    
+
     // Verificar si la fecha ya existe
     while (this.isDateInArray(adjustedDate, existingDates)) {
       // Si la fecha ya existe, moverla al día siguiente
       adjustedDate.setDate(adjustedDate.getDate() + 1);
-      
+
       // Verificar nuevamente si el nuevo día es domingo y ajustarlo
       adjustedDate = this.adjustSundayToMonday(adjustedDate);
     }
-    
+
     return adjustedDate;
   }
 
@@ -197,6 +202,8 @@ export class SubLoanGeneratorService {
    */
   private isDateInArray(date: Date, dateArray: Date[]): boolean {
     const dateString = date.toDateString();
-    return dateArray.some(existingDate => existingDate.toDateString() === dateString);
+    return dateArray.some(
+      (existingDate) => existingDate.toDateString() === dateString,
+    );
   }
 }

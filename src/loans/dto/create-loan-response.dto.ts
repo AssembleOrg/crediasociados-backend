@@ -1,5 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ToNumber, ToNumberArray, ToNumberObject } from '../../common/transformers/decimal.transformer';
+import {
+  ToNumber,
+  ToNumberArray,
+  ToNumberObject,
+} from '../../common/transformers/decimal.transformer';
 
 export class CreateLoanResponseDto {
   @ApiProperty({ example: 'loan_id_here' })
@@ -44,13 +48,13 @@ export class CreateLoanResponseDto {
 
   @ApiProperty({ example: 'Client requested weekly payments on Fridays' })
   notes?: string;
-  
+
   @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
   requestedDueDate?: string;
 
   @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
   requestDate?: string;
-  
+
   @ApiProperty({ example: '2024-01-15T00:00:00.000Z' })
   updatedAt?: string;
 

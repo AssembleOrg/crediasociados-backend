@@ -9,17 +9,19 @@ import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
 import { Prisma, UserRole } from '@prisma/client';
-import { LoanStatus } from 'src/common/enums';
+import { LoanStatus, WalletTransactionType } from 'src/common/enums';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class LoansService {
   constructor(
     private prisma: PrismaService,
     private subLoanGenerator: SubLoanGeneratorService,
+    private walletService: WalletService,
   ) {}
 
   async createLoan(createLoanDto: CreateLoanDto, userId: string) {
-    // Verificar si el cliente existe y es gestionado por el usuario
+    // 1. Verificar si el cliente existe y es gestionado por el usuario
     const clientManager = await this.prisma.clientManager.findFirst({
       where: {
         clientId: createLoanDto.clientId,
@@ -31,6 +33,22 @@ export class LoansService {
     if (!clientManager) {
       throw new BadRequestException(
         'Cliente no encontrado o no gestionado por el usuario',
+      );
+    }
+
+    // 2. Verificar que el manager tenga saldo suficiente en su cartera
+    const wallet = await this.walletService.getUserWallet(userId);
+
+    if (Number(wallet.balance) < createLoanDto.amount) {
+      throw new BadRequestException(
+        `Saldo insuficiente en cartera. Disponible: ${Number(wallet.balance)}, Requerido: ${createLoanDto.amount}`,
+      );
+    }
+
+    // 3. Validar que la moneda del préstamo coincida con la de la cartera
+    if (wallet.currency !== createLoanDto.currency) {
+      throw new BadRequestException(
+        `La cartera usa ${wallet.currency}, no se puede prestar en ${createLoanDto.currency}`,
       );
     }
 
@@ -79,12 +97,13 @@ export class LoansService {
       }
     }
 
-    // Usar transacción para crear el loan y los subloans
+    // 4. Usar transacción para crear el loan, subloans y debitar de cartera
     const result = await this.prisma.$transaction(async (prisma) => {
       // Crear el préstamo
       const loan = await prisma.loan.create({
         data: {
           clientId: createLoanDto.clientId,
+          managerId: userId, // NUEVO: Agregar manager ID
           amount: createLoanDto.amount,
           originalAmount: createLoanDto.amount,
           currency: createLoanDto.currency || 'ARS',
@@ -92,7 +111,9 @@ export class LoansService {
           paymentDay: createLoanDto.paymentDay,
           status: LoanStatus.ACTIVE,
           totalPayments: createLoanDto.totalPayments,
-          firstDueDate: createLoanDto.firstDueDate ? DateUtil.parseToDate(createLoanDto.firstDueDate) : null,
+          firstDueDate: createLoanDto.firstDueDate
+            ? DateUtil.parseToDate(createLoanDto.firstDueDate)
+            : null,
           loanTrack: loanTrack,
           prefix: prefix,
           year: year,
@@ -111,9 +132,20 @@ export class LoansService {
       await this.subLoanGenerator.generateSubLoans(
         loan.id,
         createLoanDto,
-        createLoanDto.firstDueDate ? DateUtil.parseToDate(createLoanDto.firstDueDate) : undefined,
-        prisma
+        createLoanDto.firstDueDate
+          ? DateUtil.parseToDate(createLoanDto.firstDueDate)
+          : undefined,
+        prisma,
       );
+
+      // NUEVO: Debitar de la cartera del manager
+      await this.walletService.debit({
+        userId,
+        amount: createLoanDto.amount,
+        type: WalletTransactionType.LOAN_DISBURSEMENT,
+        description: `Préstamo ${loanTrack} - ${createLoanDto.description || 'Desembolso'}`,
+        transaction: prisma,
+      });
 
       // Obtener el loan con los subloans generados
       const loanWithSubLoans = await prisma.loan.findUnique({
@@ -406,7 +438,7 @@ export class LoansService {
     const skip = (page - 1) * limit;
 
     // Construir whereClause basado en el rol del usuario
-    let whereClause: any = {
+    const whereClause: any = {
       deletedAt: null,
     };
 
@@ -453,7 +485,10 @@ export class LoansService {
     }
 
     if (filters.loanTrack) {
-      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+      whereClause.loanTrack = {
+        contains: filters.loanTrack,
+        mode: 'insensitive',
+      };
     }
 
     if (filters.status) {
@@ -492,13 +527,19 @@ export class LoansService {
       whereClause.subLoans = {
         some: {
           deletedAt: null,
-          ...(filters.dueDateFrom || filters.dueDateTo ? {
-            dueDate: {
-              ...(filters.dueDateFrom ? { gte: DateUtil.parseToDate(filters.dueDateFrom) } : {}),
-              ...(filters.dueDateTo ? { lte: DateUtil.parseToDate(filters.dueDateTo) } : {}),
-            }
-          } : {})
-        }
+          ...(filters.dueDateFrom || filters.dueDateTo
+            ? {
+                dueDate: {
+                  ...(filters.dueDateFrom
+                    ? { gte: DateUtil.parseToDate(filters.dueDateFrom) }
+                    : {}),
+                  ...(filters.dueDateTo
+                    ? { lte: DateUtil.parseToDate(filters.dueDateTo) }
+                    : {}),
+                },
+              }
+            : {}),
+        },
       };
     }
 
@@ -553,7 +594,7 @@ export class LoansService {
     filters: LoanFiltersDto,
   ): Promise<LoanChartDataDto[]> {
     // Construir whereClause basado en el rol del usuario (mismo que arriba pero sin paginación)
-    let whereClause: any = {
+    const whereClause: any = {
       deletedAt: null,
     };
 
@@ -597,7 +638,10 @@ export class LoansService {
     }
 
     if (filters.loanTrack) {
-      whereClause.loanTrack = { contains: filters.loanTrack, mode: 'insensitive' };
+      whereClause.loanTrack = {
+        contains: filters.loanTrack,
+        mode: 'insensitive',
+      };
     }
 
     if (filters.status) {
@@ -636,13 +680,19 @@ export class LoansService {
       whereClause.subLoans = {
         some: {
           deletedAt: null,
-          ...(filters.dueDateFrom || filters.dueDateTo ? {
-            dueDate: {
-              ...(filters.dueDateFrom ? { gte: DateUtil.parseToDate(filters.dueDateFrom) } : {}),
-              ...(filters.dueDateTo ? { lte: DateUtil.parseToDate(filters.dueDateTo) } : {}),
-            }
-          } : {})
-        }
+          ...(filters.dueDateFrom || filters.dueDateTo
+            ? {
+                dueDate: {
+                  ...(filters.dueDateFrom
+                    ? { gte: DateUtil.parseToDate(filters.dueDateFrom) }
+                    : {}),
+                  ...(filters.dueDateTo
+                    ? { lte: DateUtil.parseToDate(filters.dueDateTo) }
+                    : {}),
+                },
+              }
+            : {}),
+        },
       };
     }
 
@@ -680,9 +730,14 @@ export class LoansService {
     });
 
     return loans.map((loan) => {
-      const completedPayments = loan.subLoans.filter((sub) => sub.status === 'PAID').length;
+      const completedPayments = loan.subLoans.filter(
+        (sub) => sub.status === 'PAID',
+      ).length;
       const pendingPayments = loan.totalPayments - completedPayments;
-      const paidAmount = loan.subLoans.reduce((sum, sub) => sum + Number(sub.paidAmount || 0), 0);
+      const paidAmount = loan.subLoans.reduce(
+        (sum, sub) => sum + Number(sub.paidAmount || 0),
+        0,
+      );
       const remainingAmount = Number(loan.amount) - paidAmount;
       const nextDueDate = loan.subLoans
         .filter((sub) => sub.status !== 'PAID')
@@ -722,4 +777,4 @@ export class LoansService {
 
     return managedUsers.map((mu) => mu.id);
   }
-} 
+}

@@ -6,3 +6,5 @@ export { PaymentFrequency } from './payment-frequency.enum';
 export { PaymentDay } from './payment-day.enum';
 export { TransactionType } from './transaction-type.enum';
 export { SubLoanStatus } from './sub-loan-status.enum';
+export { WalletTransactionType } from './wallet-transaction-type.enum';
+export { ExpenseCategory } from './expense-category.enum';

@@ -1,0 +1,6 @@
+export enum ExpenseCategory {
+  COMBUSTIBLE = 'COMBUSTIBLE',
+  CONSUMO = 'CONSUMO',
+  REPARACIONES = 'REPARACIONES',
+  OTROS = 'OTROS',
+}
