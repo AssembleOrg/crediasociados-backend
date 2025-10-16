@@ -18,6 +18,8 @@ model User {
   updatedAt          DateTime            @updatedAt
   deletedAt          DateTime?
   createdById        String?
+  clientQuota        Int                 @default(0)
+  usedClientQuota    Int                 @default(0)
   managedClients     ClientManager[]
   refreshTokens      RefreshToken[]
   wallet             Wallet?
@@ -212,6 +214,7 @@ enum LoanStatus {
 enum ConfigKey {
   ADMIN_MAX_SUBADMINS
   SUBADMIN_MAX_MANAGERS
+  ADMIN_MAX_CLIENTS
 }
 
 enum Currency {

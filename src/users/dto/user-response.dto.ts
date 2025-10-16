@@ -23,6 +23,15 @@ export class UserResponseDto {
   @ApiProperty({ required: false, nullable: true })
   cuit?: string | null;
 
+  @ApiProperty({ description: 'Cuota total de clientes asignada' })
+  clientQuota: number;
+
+  @ApiProperty({ description: 'Cuota de clientes ya utilizada' })
+  usedClientQuota: number;
+
+  @ApiProperty({ description: 'Cuota de clientes disponible' })
+  availableClientQuota: number;
+
   @ApiProperty()
   createdAt: Date;
 
