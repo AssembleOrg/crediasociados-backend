@@ -117,7 +117,8 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
     status: 200,
-    description: 'Created users retrieved successfully',
+    description: 'Created users retrieved successfully with quota and wallet information',
+    type: [UserResponseDto],
   })
   async getCreatedUsers(@Param('id') id: string): Promise<UserResponseDto[]> {
     return this.usersService.getCreatedUsers(id);

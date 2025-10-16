@@ -1,5 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { UserRole } from 'src/common/enums';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { UserRole, Currency } from 'src/common/enums';
+
+export class WalletInfoDto {
+  @ApiProperty({ description: 'ID de la cartera' })
+  id: string;
+
+  @ApiProperty({ description: 'Saldo disponible', example: 1234.56 })
+  balance: number;
+
+  @ApiProperty({ enum: Currency, description: 'Moneda de la cartera' })
+  currency: Currency;
+}
 
 export class UserResponseDto {
   @ApiProperty()
@@ -22,6 +33,22 @@ export class UserResponseDto {
 
   @ApiProperty({ required: false, nullable: true })
   cuit?: string | null;
+
+  @ApiProperty({ description: 'Cuota total de clientes asignada' })
+  clientQuota: number;
+
+  @ApiProperty({ description: 'Cuota de clientes ya utilizada' })
+  usedClientQuota: number;
+
+  @ApiProperty({ description: 'Cuota de clientes disponible' })
+  availableClientQuota: number;
+
+  @ApiPropertyOptional({
+    type: WalletInfoDto,
+    nullable: true,
+    description: 'Información de la cartera del usuario (solo SUBADMIN y MANAGER)',
+  })
+  wallet?: WalletInfoDto | null;
 
   @ApiProperty()
   createdAt: Date;

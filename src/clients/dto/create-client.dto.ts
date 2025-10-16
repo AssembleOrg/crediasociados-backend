@@ -30,4 +30,9 @@ export class CreateClientDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({ example: 'Empleado' })
+  @IsOptional()
+  @IsString()
+  job?: string;
 }

@@ -42,8 +42,12 @@ export class UsersService {
       convertPrismaUserRole(currentUser.role),
     );
 
-    // Check user creation limits
-    await this.validateUserCreationLimits(createUserDto.role, currentUser);
+    // Validate client quota assignment
+    await this.validateClientQuotaAssignment(
+      createUserDto.role,
+      createUserDto.clientQuota,
+      currentUser,
+    );
 
     // No DNI/CUIT validation needed - moved to Client model
 
@@ -60,12 +64,56 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
 
-    const user = await this.prisma.user.create({
-      data: {
-        ...createUserDto,
-        password: hashedPassword,
-        createdById: currentUser.id,
-      },
+    // Prepare data with client quota
+    let clientQuota = createUserDto.clientQuota || 0;
+
+    // If creating an ADMIN, assign the system's max clients limit
+    if (createUserDto.role === UserRole.ADMIN) {
+      try {
+        clientQuota = await this.systemConfigService.getConfig(
+          ConfigKey.ADMIN_MAX_CLIENTS,
+        );
+      } catch (error) {
+        // If config doesn't exist, use default value
+        clientQuota = 450;
+      }
+    }
+
+    const userData: any = {
+      email: createUserDto.email,
+      password: hashedPassword,
+      fullName: createUserDto.fullName,
+      phone: createUserDto.phone,
+      role: createUserDto.role,
+      createdById: currentUser.id,
+      clientQuota: clientQuota,
+      usedClientQuota: 0,
+    };
+
+    // Create user and update parent's used quota in a transaction
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: userData,
+      });
+
+      // Update parent's used quota if applicable
+      if (
+        (createUserDto.role === UserRole.SUBADMIN ||
+          createUserDto.role === UserRole.MANAGER) &&
+        createUserDto.clientQuota &&
+        createUserDto.clientQuota > 0
+      ) {
+        await tx.user.update({
+          where: { id: currentUser.id },
+          data: {
+            usedClientQuota: {
+              increment: createUserDto.clientQuota,
+            },
+          },
+        });
+      }
+
+      return newUser;
     });
 
     // NUEVO: Crear cartera automáticamente si es SUBADMIN o MANAGER
@@ -99,6 +147,8 @@ export class UsersService {
           fullName: true,
           phone: true,
           role: true,
+          clientQuota: true,
+          usedClientQuota: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -132,6 +182,8 @@ export class UsersService {
         fullName: true,
         phone: true,
         role: true,
+        clientQuota: true,
+        usedClientQuota: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -223,15 +275,39 @@ export class UsersService {
         fullName: true,
         phone: true,
         role: true,
+        clientQuota: true,
+        usedClientQuota: true,
         createdAt: true,
         updatedAt: true,
+        wallet: {
+          select: {
+            id: true,
+            balance: true,
+            currency: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    return createdUsers.map(convertPrismaUserToResponse);
+    return createdUsers.map((user) => {
+      const response = convertPrismaUserToResponse(user);
+      return {
+        ...response,
+        clientQuota: user.clientQuota,
+        usedClientQuota: user.usedClientQuota,
+        availableClientQuota: user.clientQuota - user.usedClientQuota,
+        wallet: user.wallet
+          ? {
+              id: user.wallet.id,
+              balance: Number(user.wallet.balance),
+              currency: user.wallet.currency,
+            }
+          : null,
+      };
+    });
   }
 
   async getUserHierarchy(userId: string): Promise<{
@@ -286,46 +362,73 @@ export class UsersService {
     }
   }
 
-  private async validateUserCreationLimits(
+  private async validateClientQuotaAssignment(
     newRole: UserRole,
+    requestedQuota: number | undefined,
     currentUser: any,
   ): Promise<void> {
-    // SUPERADMIN has no limits
+    // SUPERADMIN doesn't need quota validation (they can create ADMINs)
     if (currentUser.role === UserRole.SUPERADMIN) {
       return;
     }
 
-    // Count current created users by the current user
-    const createdUsersCount = await this.prisma.user.count({
-      where: {
-        createdById: currentUser.id,
-        role: newRole,
-        deletedAt: null,
+    // If creating a SUBADMIN or MANAGER, quota is required
+    if (
+      (newRole === UserRole.SUBADMIN || newRole === UserRole.MANAGER) &&
+      (!requestedQuota || requestedQuota <= 0)
+    ) {
+      throw new BadRequestException(
+        `Client quota is required when creating ${newRole} accounts`,
+      );
+    }
+
+    // Only validate quota for SUBADMIN and MANAGER roles
+    if (newRole !== UserRole.SUBADMIN && newRole !== UserRole.MANAGER) {
+      return;
+    }
+
+    // Get current user's quota information
+    const parentUser = await this.prisma.user.findUnique({
+      where: { id: currentUser.id },
+      select: {
+        clientQuota: true,
+        usedClientQuota: true,
+        role: true,
       },
     });
 
-    let maxAllowed = 0;
-    let limitType = '';
-
-    if (currentUser.role === UserRole.ADMIN && newRole === UserRole.SUBADMIN) {
-      maxAllowed = await this.systemConfigService.getConfig(
-        ConfigKey.ADMIN_MAX_SUBADMINS,
-      );
-      limitType = 'SUBADMIN';
-    } else if (
-      currentUser.role === UserRole.SUBADMIN &&
-      newRole === UserRole.MANAGER
-    ) {
-      maxAllowed = await this.systemConfigService.getConfig(
-        ConfigKey.SUBADMIN_MAX_MANAGERS,
-      );
-      limitType = 'MANAGER';
+    if (!parentUser) {
+      throw new NotFoundException('Current user not found');
     }
 
-    if (maxAllowed > 0 && createdUsersCount >= maxAllowed) {
-      throw new ForbiddenException(
-        `You have reached the maximum limit of ${maxAllowed} ${limitType} accounts. Current count: ${createdUsersCount}`,
+    const availableQuota =
+      parentUser.clientQuota - parentUser.usedClientQuota;
+
+    // Check if parent has enough quota
+    if (requestedQuota && requestedQuota > availableQuota) {
+      throw new BadRequestException(
+        `Insufficient client quota. Available: ${availableQuota}, Requested: ${requestedQuota}`,
       );
+    }
+
+    // For ADMINs creating SUBADMINs, check against system config
+    if (currentUser.role === UserRole.ADMIN && newRole === UserRole.SUBADMIN) {
+      const maxClientsPerAdmin = await this.systemConfigService.getConfig(
+        ConfigKey.ADMIN_MAX_CLIENTS,
+      );
+
+      if (requestedQuota && requestedQuota > maxClientsPerAdmin) {
+        throw new BadRequestException(
+          `Cannot assign more than ${maxClientsPerAdmin} clients to a SUBADMIN`,
+        );
+      }
+
+      // Check if admin's total quota doesn't exceed the system limit
+      if (parentUser.clientQuota > maxClientsPerAdmin) {
+        throw new BadRequestException(
+          `Admin's total client quota cannot exceed ${maxClientsPerAdmin}`,
+        );
+      }
     }
   }
 

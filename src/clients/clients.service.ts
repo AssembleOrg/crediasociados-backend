@@ -31,6 +31,19 @@ export class ClientsService {
       throw new BadRequestException('Debe proporcionar al menos DNI o CUIT');
     }
 
+    // Verificar cuota disponible del manager
+    const manager = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        clientQuota: true,
+        usedClientQuota: true,
+      },
+    });
+
+    if (!manager) {
+      throw new NotFoundException('Manager not found');
+    }
+
     // Verificar si ya existe un cliente con el mismo DNI o CUIT
     let existingClient: any = null;
     if (createClientDto.dni) {
@@ -74,13 +87,31 @@ export class ClientsService {
         throw new BadRequestException('Este cliente ya está asignado a usted');
       }
 
-      // Asignar el cliente existente al manager actual
-      await this.prisma.clientManager.create({
-        data: {
-          clientId: existingClient.id,
-          userId: userId,
-        },
-      });
+      // Verificar cuota antes de asignar cliente existente
+      const availableQuota = manager.clientQuota - manager.usedClientQuota;
+      if (availableQuota <= 0) {
+        throw new BadRequestException(
+          `No tiene cuota disponible para asignar clientes. Cuota utilizada: ${manager.usedClientQuota}/${manager.clientQuota}`,
+        );
+      }
+
+      // Asignar el cliente existente al manager actual y actualizar cuota
+      await this.prisma.$transaction([
+        this.prisma.clientManager.create({
+          data: {
+            clientId: existingClient.id,
+            userId: userId,
+          },
+        }),
+        this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            usedClientQuota: {
+              increment: 1,
+            },
+          },
+        }),
+      ]);
 
       return {
         ...existingClient,
@@ -89,21 +120,43 @@ export class ClientsService {
       };
     }
 
-    // Crear nuevo cliente
-    const newClient = await this.prisma.client.create({
-      data: createClientDto,
-    });
+    // Verificar cuota antes de crear nuevo cliente
+    const availableQuota = manager.clientQuota - manager.usedClientQuota;
+    if (availableQuota <= 0) {
+      throw new BadRequestException(
+        `No tiene cuota disponible para crear clientes. Cuota utilizada: ${manager.usedClientQuota}/${manager.clientQuota}`,
+      );
+    }
 
-    // Asignar el cliente al manager que lo creó
-    await this.prisma.clientManager.create({
-      data: {
-        clientId: newClient.id,
-        userId: userId,
-      },
+    // Crear nuevo cliente y actualizar cuota en una transacción
+    const result = await this.prisma.$transaction(async (tx) => {
+      const newClient = await tx.client.create({
+        data: createClientDto,
+      });
+
+      // Asignar el cliente al manager que lo creó
+      await tx.clientManager.create({
+        data: {
+          clientId: newClient.id,
+          userId: userId,
+        },
+      });
+
+      // Incrementar la cuota utilizada
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          usedClientQuota: {
+            increment: 1,
+          },
+        },
+      });
+
+      return newClient;
     });
 
     return {
-      ...newClient,
+      ...result,
       isExistingClient: false,
       message: 'Cliente creado exitosamente',
     };
@@ -418,5 +471,118 @@ export class ClientsService {
     });
 
     return managedClients.map((mc) => mc.clientId);
+  }
+
+  async getInactiveClientsReport(userId: string, userRole: UserRole) {
+    // Solo SUBADMIN y superiores pueden ver este reporte
+    if (
+      userRole !== UserRole.SUBADMIN &&
+      userRole !== UserRole.ADMIN &&
+      userRole !== UserRole.SUPERADMIN
+    ) {
+      throw new ForbiddenException(
+        'No tiene permisos para ver este reporte',
+      );
+    }
+
+    let managerIds: string[] = [];
+
+    if (userRole === UserRole.SUBADMIN) {
+      // Obtener todos los managers del SUBADMIN
+      managerIds = await this.getManagedUserIds(userId);
+    } else {
+      // ADMIN y SUPERADMIN pueden ver todos los managers
+      const allManagers = await this.prisma.user.findMany({
+        where: {
+          role: UserRole.MANAGER,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      managerIds = allManagers.map((m) => m.id);
+    }
+
+    if (managerIds.length === 0) {
+      return {
+        totalInactiveClients: 0,
+        managerDetails: [],
+      };
+    }
+
+    // Para cada manager, obtener clientes sin préstamos activos
+    const managerDetails = await Promise.all(
+      managerIds.map(async (managerId) => {
+        // Obtener info del manager
+        const manager = await this.prisma.user.findUnique({
+          where: { id: managerId },
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        });
+
+        if (!manager) {
+          return null;
+        }
+
+        // Obtener todos los clientes del manager
+        const clientIds = await this.getManagedClientIds(managerId);
+
+        if (clientIds.length === 0) {
+          return {
+            managerId: manager.id,
+            managerName: manager.fullName,
+            managerEmail: manager.email,
+            inactiveClientsCount: 0,
+          };
+        }
+
+        // Contar clientes sin préstamos activos
+        const inactiveCount = await this.prisma.client.count({
+          where: {
+            id: { in: clientIds },
+            deletedAt: null,
+            OR: [
+              // No tiene ningún préstamo
+              {
+                loans: {
+                  none: {},
+                },
+              },
+              // O todos sus préstamos no están activos
+              {
+                loans: {
+                  every: {
+                    status: {
+                      notIn: ['ACTIVE', 'APPROVED', 'PENDING'],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
+
+        return {
+          managerId: manager.id,
+          managerName: manager.fullName,
+          managerEmail: manager.email,
+          inactiveClientsCount: inactiveCount,
+        };
+      }),
+    );
+
+    // Filtrar nulls y calcular total
+    const validManagerDetails = managerDetails.filter((d) => d !== null);
+    const totalInactiveClients = validManagerDetails.reduce(
+      (sum, m) => sum + (m?.inactiveClientsCount || 0),
+      0,
+    );
+
+    return {
+      totalInactiveClients,
+      managerDetails: validManagerDetails,
+    };
   }
 }

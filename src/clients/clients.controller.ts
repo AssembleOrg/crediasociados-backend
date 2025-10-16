@@ -21,8 +21,7 @@ import { ClientsService } from './clients.service';
 import {
   CreateClientDto,
   UpdateClientDto,
-  ClientResponseDto,
-  ClientWithDetailsDto,
+  InactiveClientsResponseDto,
 } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
@@ -274,5 +273,27 @@ export class ClientsController {
       currentUser.role,
     );
     return result;
+  }
+
+  @Get('reports/inactive')
+  @Roles(UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary:
+      'Get report of clients without active loans (SUBADMIN+ only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Inactive clients report',
+    type: InactiveClientsResponseDto,
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  async getInactiveClientsReport(@CurrentUser() currentUser: any) {
+    return this.clientsService.getInactiveClientsReport(
+      currentUser.id,
+      currentUser.role,
+    );
   }
 }

@@ -4,7 +4,6 @@ import {
   Post,
   Body,
   UseGuards,
-  Request,
   Query,
 } from '@nestjs/common';
 import {
@@ -19,6 +18,7 @@ import { DepositDto, WithdrawalDto, TransferDto } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole, WalletTransactionType } from '../common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 
@@ -40,8 +40,8 @@ export class WalletController {
     status: 404,
     description: 'Cartera no encontrada',
   })
-  async getMyWallet(@Request() req: any) {
-    return this.walletService.getUserWallet(req.user.sub);
+  async getMyWallet(@CurrentUser() currentUser: any) {
+    return this.walletService.getUserWallet(currentUser.id);
   }
 
   @Post('deposit')
@@ -55,8 +55,8 @@ export class WalletController {
     status: 400,
     description: 'Datos inválidos',
   })
-  async deposit(@Request() req: any, @Body() depositDto: DepositDto) {
-    return this.walletService.deposit(req.user.sub, depositDto);
+  async deposit(@CurrentUser() currentUser: any, @Body() depositDto: DepositDto) {
+    return this.walletService.deposit(currentUser.id, depositDto);
   }
 
   @Post('withdrawal')
@@ -70,8 +70,8 @@ export class WalletController {
     status: 400,
     description: 'Saldo insuficiente o datos inválidos',
   })
-  async withdrawal(@Request() req: any, @Body() withdrawalDto: WithdrawalDto) {
-    return this.walletService.withdrawal(req.user.sub, withdrawalDto);
+  async withdrawal(@CurrentUser() currentUser: any, @Body() withdrawalDto: WithdrawalDto) {
+    return this.walletService.withdrawal(currentUser.id, withdrawalDto);
   }
 
   @Post('transfer')
@@ -89,8 +89,8 @@ export class WalletController {
     status: 403,
     description: 'Solo SUBADMIN puede realizar transferencias',
   })
-  async transfer(@Request() req: any, @Body() transferDto: TransferDto) {
-    return this.walletService.transfer(req.user.sub, transferDto);
+  async transfer(@CurrentUser() currentUser: any, @Body() transferDto: TransferDto) {
+    return this.walletService.transfer(currentUser.id, transferDto);
   }
 
   @Get('transactions')
@@ -131,13 +131,13 @@ export class WalletController {
     description: 'Transacciones obtenidas exitosamente',
   })
   async getTransactions(
-    @Request() req: any,
+    @CurrentUser() currentUser: any,
     @Query() paginationDto: PaginationDto,
     @Query('type') type?: WalletTransactionType,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.walletService.getTransactions(req.user.sub, paginationDto, {
+    return this.walletService.getTransactions(currentUser.id, paginationDto, {
       type,
       startDate,
       endDate,
@@ -151,7 +151,7 @@ export class WalletController {
     status: 200,
     description: 'Saldo obtenido exitosamente',
   })
-  async getBalance(@Request() req: any) {
-    return this.walletService.getBalance(req.user.sub);
+  async getBalance(@CurrentUser() currentUser: any) {
+    return this.walletService.getBalance(currentUser.id);
   }
 }
