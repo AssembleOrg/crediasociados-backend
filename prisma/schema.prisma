@@ -336,3 +336,66 @@ enum ExpenseCategory {
   REPARACIONES
   OTROS
 }
+
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  TRANSFER
+  PAYMENT
+  APPROVAL
+  REJECTION
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  userId      String?
+  userEmail   String?
+  userRole    String?
+  action      AuditAction
+  entity      String // Ejemplo: "User", "Loan", "Client", etc.
+  entityId    String?
+  changes     Json? // Almacena { before: {...}, after: {...} }
+  ip          String?
+  userAgent   String?
+  endpoint    String? // Ruta del endpoint
+  method      String? // GET, POST, PUT, DELETE, etc.
+  statusCode  Int?
+  description String?
+  createdAt   DateTime    @default(now())
+
+  @@map("audit_logs")
+  @@index([userId])
+  @@index([entity])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model HttpLog {
+  id            String   @id @default(cuid())
+  method        String // GET, POST, PUT, DELETE, etc.
+  url           String
+  endpoint      String // Ruta sin query params
+  statusCode    Int
+  responseTime  Int // En milisegundos
+  ip            String?
+  userAgent     String?
+  userId        String?
+  userEmail     String?
+  requestBody   Json? // Body de la request
+  responseBody  Json? // Body de la respuesta (opcional, puede ser grande)
+  queryParams   Json? // Query parameters
+  headers       Json? // Headers importantes
+  errorMessage  String? // Si hubo error
+  createdAt     DateTime @default(now())
+
+  @@map("http_logs")
+  @@index([method])
+  @@index([statusCode])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([endpoint])
+}

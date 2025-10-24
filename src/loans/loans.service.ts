@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
@@ -776,5 +777,145 @@ export class LoansService {
     });
 
     return managedUsers.map((mu) => mu.id);
+  }
+
+  async permanentlyDeleteLoan(loanId: string, userId: string): Promise<any> {
+    // Obtener el préstamo con todos sus detalles
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: loanId },
+      include: {
+        client: {
+          include: {
+            managers: {
+              where: { deletedAt: null },
+            },
+          },
+        },
+        subLoans: {
+          include: {
+            payments: true,
+          },
+        },
+      },
+    });
+
+    if (!loan) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    // Verificar que el usuario tenga permisos
+    const isManager = loan.client.managers.some((m) => m.userId === userId);
+    if (!isManager) {
+      throw new ForbiddenException(
+        'No tienes permisos para eliminar este préstamo',
+      );
+    }
+
+    // Verificar que ningún subloan haya sido pagado
+    const hasAnyPaidSubLoan = loan.subLoans.some(
+      (subloan) =>
+        subloan.status === 'PAID' ||
+        subloan.status === 'PARTIAL' ||
+        (subloan.payments && subloan.payments.length > 0),
+    );
+
+    if (hasAnyPaidSubLoan) {
+      throw new BadRequestException(
+        'No se puede eliminar el préstamo porque tiene cuotas que ya fueron pagadas. Solo se pueden eliminar préstamos sin pagos registrados.',
+      );
+    }
+
+    // Calcular cuánto dinero devolver a la wallet
+    // Total del préstamo - pagos ya recibidos (debería ser 0 en este caso)
+    const totalPrestamo = Number(loan.amount);
+    const totalPagado = loan.subLoans.reduce((sum, subloan) => {
+      const pagosSubloan = subloan.payments.reduce(
+        (sumPayments, payment) => sumPayments + Number(payment.amount),
+        0,
+      );
+      return sum + pagosSubloan;
+    }, 0);
+
+    const montoADevolver = totalPrestamo - totalPagado;
+
+    // Obtener la wallet del manager
+    const managerWallet = await this.prisma.wallet.findUnique({
+      where: { userId },
+    });
+
+    if (!managerWallet) {
+      throw new NotFoundException('Wallet del manager no encontrada');
+    }
+
+    // Eliminar el préstamo y devolver dinero en una transacción
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Eliminar payments
+      await tx.payment.deleteMany({
+        where: {
+          subLoan: {
+            loanId: loanId,
+          },
+        },
+      });
+
+      // 2. Eliminar subloans
+      await tx.subLoan.deleteMany({
+        where: { loanId: loanId },
+      });
+
+      // 3. Eliminar transactions relacionadas
+      await tx.transaction.deleteMany({
+        where: { loanId: loanId },
+      });
+
+      // 4. Devolver dinero a la wallet si hay monto a devolver
+      let updatedWallet: any = null;
+      let walletTransaction: any = null;
+
+      if (montoADevolver > 0) {
+        updatedWallet = await tx.wallet.update({
+          where: { id: managerWallet.id },
+          data: {
+            balance: {
+              increment: new Prisma.Decimal(montoADevolver),
+            },
+          },
+        });
+
+        // Registrar la transacción de devolución
+        walletTransaction = await tx.walletTransaction.create({
+          data: {
+            walletId: managerWallet.id,
+            userId: userId,
+            type: WalletTransactionType.DEPOSIT,
+            amount: new Prisma.Decimal(montoADevolver),
+            currency: loan.currency,
+            description: `Devolución por eliminación de préstamo ${loan.loanTrack}`,
+          },
+        });
+      }
+
+      // 5. Eliminar el préstamo definitivamente
+      await tx.loan.delete({
+        where: { id: loanId },
+      });
+
+      return {
+        updatedWallet,
+        walletTransaction,
+        montoDevuelto: montoADevolver,
+      };
+    });
+
+    return {
+      message: 'Préstamo eliminado permanentemente',
+      loanTrack: loan.loanTrack,
+      montoDevuelto: montoADevolver,
+      totalPrestamo,
+      totalPagado,
+      newWalletBalance: result.updatedWallet
+        ? Number(result.updatedWallet.balance)
+        : Number(managerWallet.balance),
+    };
   }
 }

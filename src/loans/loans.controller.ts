@@ -8,6 +8,7 @@ import {
   UseGuards,
   Request,
   BadRequestException,
+  Delete,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -422,5 +423,44 @@ export class LoansController {
   @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
   async getLoanById(@Param('id') id: string, @Request() req) {
     return this.loansService.getLoanById(id, req.user.id);
+  }
+
+  @Delete(':id/permanent')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Eliminar permanentemente un préstamo y devolver dinero a la wallet',
+    description:
+      '⚠️ ACCIÓN IRREVERSIBLE ⚠️ ' +
+      'Elimina permanentemente el préstamo y todos sus registros relacionados (subloans, payments, transactions). ' +
+      'Devuelve a la wallet del MANAGER el monto completo del préstamo (solo si no hay pagos). ' +
+      '🚫 RESTRICCIÓN: Solo se pueden eliminar préstamos que NO tengan ninguna cuota pagada. ' +
+      'Si algún subloan fue pagado (total o parcialmente), la eliminación será rechazada. ' +
+      'Solo el MANAGER propietario del préstamo puede eliminarlo.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Préstamo eliminado y dinero devuelto exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Préstamo eliminado permanentemente' },
+        loanTrack: { type: 'string', example: 'LOAN-2025-001' },
+        montoDevuelto: { type: 'number', example: 100000 },
+        totalPrestamo: { type: 'number', example: 100000 },
+        totalPagado: { type: 'number', example: 0 },
+        newWalletBalance: { type: 'number', example: 250000 },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'No se puede eliminar el préstamo porque tiene cuotas que ya fueron pagadas',
+  })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para eliminar este préstamo' })
+  @ApiResponse({ status: 404, description: 'Préstamo o wallet no encontrados' })
+  async permanentlyDeleteLoan(@Param('id') id: string, @Request() req) {
+    return this.loansService.permanentlyDeleteLoan(id, req.user.id);
   }
 }

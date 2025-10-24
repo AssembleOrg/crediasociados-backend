@@ -17,9 +17,12 @@ import { ScheduledTasksModule } from './scheduled-tasks/scheduled-tasks.module';
 import { WalletModule } from './wallet/wallet.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DailyClosureModule } from './daily-closure/daily-closure.module';
+import { AuditModule } from './audit/audit.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AuditService } from './common/services/audit.service';
 import configuration from './config/configuration';
 
 @Module({
@@ -47,10 +50,16 @@ import configuration from './config/configuration';
     WalletModule,
     PaymentsModule,
     DailyClosureModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    AuditService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpLoggingInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditInterceptor,
