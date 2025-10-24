@@ -173,7 +173,14 @@ export class UsersService {
     };
   }
 
-  async findOne(id: string): Promise<UserResponseDto> {
+  async findOne(id: string, currentUser?: any): Promise<UserResponseDto> {
+    // Si es MANAGER, solo puede ver su propio perfil
+    if (currentUser && currentUser.role === UserRole.MANAGER && currentUser.id !== id) {
+      throw new ForbiddenException(
+        'Los MANAGER solo pueden acceder a su propio perfil',
+      );
+    }
+
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
       select: {
@@ -186,6 +193,13 @@ export class UsersService {
         usedClientQuota: true,
         createdAt: true,
         updatedAt: true,
+        wallet: {
+          select: {
+            id: true,
+            balance: true,
+            currency: true,
+          },
+        },
       },
     });
 
@@ -193,7 +207,18 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    return convertPrismaUserToResponse(user);
+    const response = convertPrismaUserToResponse(user);
+    
+    // Agregar información de wallet si existe
+    if (user.wallet) {
+      response.wallet = {
+        id: user.wallet.id,
+        balance: Number(user.wallet.balance),
+        currency: user.wallet.currency,
+      };
+    }
+
+    return response;
   }
 
   async update(

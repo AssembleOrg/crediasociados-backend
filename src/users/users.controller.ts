@@ -68,7 +68,7 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
+  @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.MANAGER)
   @ApiOperation({ summary: 'Get a user by ID' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({
@@ -77,8 +77,15 @@ export class UsersController {
     type: UserResponseDto,
   })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async findOne(@Param('id') id: string): Promise<UserResponseDto> {
-    return this.usersService.findOne(id);
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - MANAGER can only access their own profile',
+  })
+  async findOne(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ): Promise<UserResponseDto> {
+    return this.usersService.findOne(id, currentUser);
   }
 
   @Patch(':id')
