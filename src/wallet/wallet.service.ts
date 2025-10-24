@@ -347,8 +347,11 @@ export class WalletService {
         },
       });
 
-      // Crear transacción de SUBADMIN
-      const subadminTransaction = await tx.walletTransaction.create({
+      // Crear una única transacción que registra la transferencia
+      // userId: quien inicia la transferencia (siempre el SUBADMIN)
+      // relatedUserId: el otro usuario involucrado (el MANAGER)
+      // walletId: cartera del SUBADMIN (quien ejecuta la acción)
+      const transaction = await tx.walletTransaction.create({
         data: {
           walletId: subadminWallet.id,
           userId: subadminId,
@@ -357,35 +360,15 @@ export class WalletService {
             : WalletTransactionType.TRANSFER_FROM_SUBADMIN,
           amount: new Prisma.Decimal(absoluteAmount),
           currency: transferDto.currency,
-          description: isPositiveTransfer
-            ? transferDto.description
-            : `Retiro de fondos: ${transferDto.description}`,
+          description: transferDto.description,
           relatedUserId: transferDto.managerId,
-        },
-      });
-
-      // Crear transacción de MANAGER
-      const managerTransaction = await tx.walletTransaction.create({
-        data: {
-          walletId: managerWalletId,
-          userId: transferDto.managerId,
-          type: isPositiveTransfer
-            ? WalletTransactionType.TRANSFER_FROM_SUBADMIN
-            : WalletTransactionType.TRANSFER_TO_MANAGER,
-          amount: new Prisma.Decimal(absoluteAmount),
-          currency: transferDto.currency,
-          description: isPositiveTransfer
-            ? transferDto.description
-            : `Retiro por SUBADMIN: ${transferDto.description}`,
-          relatedUserId: subadminId,
         },
       });
 
       return {
         subadminWallet: updatedSubadminWallet,
         managerWallet: updatedManagerWallet,
-        subadminTransaction,
-        managerTransaction,
+        transaction,
       };
     });
 
@@ -399,10 +382,12 @@ export class WalletService {
         newBalance: Number(result.managerWallet.balance),
       },
       transaction: {
-        id: result.subadminTransaction.id,
-        type: result.subadminTransaction.type,
-        amount: Number(result.subadminTransaction.amount),
-        createdAt: result.subadminTransaction.createdAt,
+        id: result.transaction.id,
+        type: result.transaction.type,
+        amount: Number(result.transaction.amount),
+        from: subadminId,
+        to: transferDto.managerId,
+        createdAt: result.transaction.createdAt,
       },
     };
   }
@@ -431,9 +416,12 @@ export class WalletService {
       throw new NotFoundException('Cartera no encontrada');
     }
 
-    // Construir filtros
+    // Construir filtros - incluir transacciones donde el usuario es el origen o el destino
     const whereClause: any = {
-      walletId: wallet.id,
+      OR: [
+        { walletId: wallet.id }, // Transacciones en la cartera del usuario
+        { relatedUserId: userId }, // Transferencias donde el usuario es el destinatario
+      ],
     };
 
     if (filters?.type) {
@@ -463,6 +451,7 @@ export class WalletService {
               id: true,
               fullName: true,
               email: true,
+              role: true,
             },
           },
         },
@@ -472,11 +461,39 @@ export class WalletService {
 
     const totalPages = Math.ceil(total / limit);
 
+    // Enriquecer transacciones con información del usuario relacionado
+    const enrichedTransactions = await Promise.all(
+      transactions.map(async (t) => {
+        let relatedUser: any = null;
+        if (t.relatedUserId) {
+          relatedUser = await this.prisma.user.findUnique({
+            where: { id: t.relatedUserId },
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              role: true,
+            },
+          });
+        }
+
+        return {
+          id: t.id,
+          type: t.type,
+          amount: Number(t.amount),
+          currency: t.currency,
+          description: t.description,
+          createdAt: t.createdAt,
+          user: t.user,
+          relatedUser,
+          // Indicar si el usuario actual es el que recibe la transferencia
+          isReceiver: t.relatedUserId === userId,
+        };
+      }),
+    );
+
     return {
-      data: transactions.map((t) => ({
-        ...t,
-        amount: Number(t.amount),
-      })),
+      data: enrichedTransactions,
       meta: {
         page,
         limit,
