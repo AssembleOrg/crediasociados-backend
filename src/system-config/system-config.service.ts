@@ -33,24 +33,18 @@ export class SystemConfigService {
 
   private getDefaultValue(key: ConfigKey): number {
     const defaults = {
-      [ConfigKey.ADMIN_MAX_SUBADMINS]: 3,
-      [ConfigKey.SUBADMIN_MAX_MANAGERS]: 10,
+      [ConfigKey.ADMIN_MAX_CLIENTS]: 450,
     };
 
-    return defaults[key];
+    return defaults[key] || 0;
   }
 
   async initializeDefaults(): Promise<void> {
     const configs = [
       {
-        key: ConfigKey.ADMIN_MAX_SUBADMINS,
-        value: 3,
-        description: 'Maximum number of SUBADMIN accounts an ADMIN can create',
-      },
-      {
-        key: ConfigKey.SUBADMIN_MAX_MANAGERS,
-        value: 10,
-        description: 'Maximum number of MANAGER accounts a SUBADMIN can create',
+        key: ConfigKey.ADMIN_MAX_CLIENTS,
+        value: 450,
+        description: 'Maximum number of clients quota for each ADMIN',
       },
     ];
 

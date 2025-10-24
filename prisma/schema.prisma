@@ -212,8 +212,6 @@ enum LoanStatus {
 }
 
 enum ConfigKey {
-  ADMIN_MAX_SUBADMINS
-  SUBADMIN_MAX_MANAGERS
   ADMIN_MAX_CLIENTS
 }
 
