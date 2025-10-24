@@ -1021,4 +1021,149 @@ export class UsersService {
 
     throw new ForbiddenException('Acceso denegado');
   }
+
+  async getManagerDashboard(managerId: string): Promise<any> {
+    // Verificar que el usuario es MANAGER
+    const manager = await this.prisma.user.findUnique({
+      where: { id: managerId },
+    });
+
+    if (!manager || manager.role !== UserRole.MANAGER) {
+      throw new ForbiddenException('Solo los MANAGER pueden acceder a este endpoint');
+    }
+
+    // 1. Capital Disponible: Saldo de la wallet
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { userId: managerId },
+    });
+
+    const capitalDisponible = wallet ? Number(wallet.balance) : 0;
+
+    // 2. Capital Asignado: Suma de todas las transferencias recibidas del SUBADMIN
+    const transferenciasRecibidas = await this.prisma.walletTransaction.findMany({
+      where: {
+        relatedUserId: managerId,
+        type: {
+          in: ['TRANSFER_FROM_SUBADMIN', 'TRANSFER_TO_MANAGER'],
+        },
+      },
+    });
+
+    let capitalAsignado = 0;
+    for (const trans of transferenciasRecibidas) {
+      // Si el tipo es TRANSFER_FROM_SUBADMIN, es dinero que recibió (+)
+      // Si el tipo es TRANSFER_TO_MANAGER pero el relatedUser es el manager, es un retiro (-)
+      const isReceiving = trans.type === 'TRANSFER_FROM_SUBADMIN';
+      const amount = Number(trans.amount);
+      capitalAsignado += isReceiving ? amount : -amount;
+    }
+
+    // También contar las transferencias donde el manager es el userId pero con tipo TRANSFER_FROM_SUBADMIN
+    const transferenciasComoReceptor = await this.prisma.walletTransaction.findMany({
+      where: {
+        userId: managerId,
+        type: 'TRANSFER_FROM_SUBADMIN',
+      },
+    });
+
+    for (const trans of transferenciasComoReceptor) {
+      capitalAsignado -= Number(trans.amount); // Estas son salidas, ya están contadas arriba
+    }
+
+    // Recalcular: solo las que fueron hechas POR el subadmin
+    capitalAsignado = 0;
+    const allTransfers = await this.prisma.walletTransaction.findMany({
+      where: {
+        OR: [
+          {
+            // Transferencias donde el manager es el destinatario
+            relatedUserId: managerId,
+            type: {
+              in: ['TRANSFER_TO_MANAGER', 'TRANSFER_FROM_SUBADMIN'],
+            },
+          },
+        ],
+      },
+    });
+
+    for (const trans of allTransfers) {
+      // Si es TRANSFER_TO_MANAGER con relatedUser = manager, significa que recibió dinero
+      if (trans.type === 'TRANSFER_TO_MANAGER' && trans.relatedUserId === managerId) {
+        capitalAsignado += Number(trans.amount);
+      }
+      // Si es TRANSFER_FROM_SUBADMIN con relatedUser = manager, significa que le quitaron dinero (retiro)
+      if (trans.type === 'TRANSFER_FROM_SUBADMIN' && trans.relatedUserId === managerId) {
+        capitalAsignado -= Number(trans.amount);
+      }
+    }
+
+    // 3. Recaudado Este Mes: Suma de pagos de subloans en el mes actual
+    const now = DateUtil.now();
+    const startOfMonth = now.startOf('month').toJSDate();
+    const endOfMonth = now.endOf('month').toJSDate();
+
+    // Obtener todos los loans del manager
+    const managerLoans = await this.prisma.loan.findMany({
+      where: {
+        client: {
+          managers: {
+            some: {
+              userId: managerId,
+              deletedAt: null,
+            },
+          },
+        },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    const loanIds = managerLoans.map((loan) => loan.id);
+
+    let recaudadoEsteMes = 0;
+    if (loanIds.length > 0) {
+      const pagosEsteMes = await this.prisma.payment.findMany({
+        where: {
+          subLoan: {
+            loanId: { in: loanIds },
+          },
+          paymentDate: {
+            gte: startOfMonth,
+            lte: endOfMonth,
+          },
+        },
+      });
+
+      recaudadoEsteMes = pagosEsteMes.reduce(
+        (sum, payment) => sum + Number(payment.amount),
+        0,
+      );
+    }
+
+    // 4. Valor de Cartera: Préstamos activos + saldo de wallet
+    let totalPrestamosActivos = 0;
+    if (loanIds.length > 0) {
+      const prestamosActivos = await this.prisma.loan.findMany({
+        where: {
+          id: { in: loanIds },
+          status: 'ACTIVE',
+          deletedAt: null,
+        },
+      });
+
+      totalPrestamosActivos = prestamosActivos.reduce(
+        (sum, loan) => sum + Number(loan.amount),
+        0,
+      );
+    }
+
+    const valorCartera = totalPrestamosActivos + capitalDisponible;
+
+    return {
+      capitalDisponible,
+      capitalAsignado,
+      recaudadoEsteMes,
+      valorCartera,
+    };
+  }
 }

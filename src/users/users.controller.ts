@@ -18,7 +18,12 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  UserResponseDto,
+  ManagerDashboardDto,
+} from './dto';
 import {
   PaginationDto,
   ClientFiltersDto,
@@ -469,5 +474,29 @@ export class UsersController {
       filters,
       currentUser,
     );
+  }
+
+  @Get('manager/dashboard')
+  @Roles(UserRole.MANAGER)
+  @ApiOperation({
+    summary: 'Obtener dashboard del MANAGER con métricas clave',
+    description:
+      'Devuelve 4 métricas principales para el dashboard del MANAGER: ' +
+      '1. Capital Disponible (saldo en wallet), ' +
+      '2. Capital Asignado (transferencias del SUBADMIN), ' +
+      '3. Recaudado Este Mes (pagos de subloans), ' +
+      '4. Valor de Cartera (préstamos activos + wallet)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Métricas del dashboard obtenidas exitosamente',
+    type: ManagerDashboardDto,
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Solo los MANAGER pueden acceder a este endpoint',
+  })
+  async getManagerDashboard(@CurrentUser() currentUser: any) {
+    return this.usersService.getManagerDashboard(currentUser.id);
   }
 }
