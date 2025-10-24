@@ -271,13 +271,6 @@ export class WalletService {
       );
     }
 
-    // Validar saldo suficiente
-    if (Number(subadminWallet.balance) < transferDto.amount) {
-      throw new BadRequestException(
-        `Saldo insuficiente. Disponible: ${Number(subadminWallet.balance)}, Requerido: ${transferDto.amount}`,
-      );
-    }
-
     // Obtener o crear cartera del manager
     let managerWallet = await this.prisma.wallet.findUnique({
       where: { userId: transferDto.managerId },
@@ -302,51 +295,88 @@ export class WalletService {
     }
 
     const managerWalletId = managerWallet.id; // Guardar el ID antes de la transacción
+    const transferAmount = transferDto.amount;
+
+    // Determinar dirección de la transferencia
+    // Positivo: SUBADMIN -> MANAGER (transferencia normal)
+    // Negativo: MANAGER -> SUBADMIN (retirar fondos del manager)
+    const isPositiveTransfer = transferAmount > 0;
+    const absoluteAmount = Math.abs(transferAmount);
+
+    // Calcular nuevos balances proyectados
+    const newSubadminBalance = isPositiveTransfer
+      ? Number(subadminWallet.balance) - absoluteAmount
+      : Number(subadminWallet.balance) + absoluteAmount;
+
+    const newManagerBalance = isPositiveTransfer
+      ? Number(managerWallet.balance) + absoluteAmount
+      : Number(managerWallet.balance) - absoluteAmount;
+
+    // Validar que ningún saldo quede negativo
+    if (newSubadminBalance < 0) {
+      throw new BadRequestException(
+        `Saldo insuficiente en cartera SUBADMIN. Disponible: ${Number(subadminWallet.balance)}, Requerido: ${absoluteAmount}`,
+      );
+    }
+
+    if (newManagerBalance < 0) {
+      throw new BadRequestException(
+        `Saldo insuficiente en cartera MANAGER. Disponible: ${Number(managerWallet.balance)}, Requerido: ${absoluteAmount}`,
+      );
+    }
 
     // Realizar transferencia en transacción
     const result = await this.prisma.$transaction(async (tx) => {
-      // Debitar de SUBADMIN
+      // Actualizar balance de SUBADMIN
       const updatedSubadminWallet = await tx.wallet.update({
         where: { id: subadminWallet.id },
         data: {
-          balance: {
-            decrement: new Prisma.Decimal(transferDto.amount),
-          },
+          balance: isPositiveTransfer
+            ? { decrement: new Prisma.Decimal(absoluteAmount) }
+            : { increment: new Prisma.Decimal(absoluteAmount) },
         },
       });
 
-      // Acreditar a MANAGER
+      // Actualizar balance de MANAGER
       const updatedManagerWallet = await tx.wallet.update({
         where: { id: managerWalletId },
         data: {
-          balance: {
-            increment: new Prisma.Decimal(transferDto.amount),
-          },
+          balance: isPositiveTransfer
+            ? { increment: new Prisma.Decimal(absoluteAmount) }
+            : { decrement: new Prisma.Decimal(absoluteAmount) },
         },
       });
 
-      // Crear transacción de SUBADMIN (débito)
+      // Crear transacción de SUBADMIN
       const subadminTransaction = await tx.walletTransaction.create({
         data: {
           walletId: subadminWallet.id,
           userId: subadminId,
-          type: WalletTransactionType.TRANSFER_TO_MANAGER,
-          amount: new Prisma.Decimal(transferDto.amount),
+          type: isPositiveTransfer
+            ? WalletTransactionType.TRANSFER_TO_MANAGER
+            : WalletTransactionType.TRANSFER_FROM_SUBADMIN,
+          amount: new Prisma.Decimal(absoluteAmount),
           currency: transferDto.currency,
-          description: transferDto.description,
+          description: isPositiveTransfer
+            ? transferDto.description
+            : `Retiro de fondos: ${transferDto.description}`,
           relatedUserId: transferDto.managerId,
         },
       });
 
-      // Crear transacción de MANAGER (crédito)
+      // Crear transacción de MANAGER
       const managerTransaction = await tx.walletTransaction.create({
         data: {
           walletId: managerWalletId,
           userId: transferDto.managerId,
-          type: WalletTransactionType.TRANSFER_FROM_SUBADMIN,
-          amount: new Prisma.Decimal(transferDto.amount),
+          type: isPositiveTransfer
+            ? WalletTransactionType.TRANSFER_FROM_SUBADMIN
+            : WalletTransactionType.TRANSFER_TO_MANAGER,
+          amount: new Prisma.Decimal(absoluteAmount),
           currency: transferDto.currency,
-          description: transferDto.description,
+          description: isPositiveTransfer
+            ? transferDto.description
+            : `Retiro por SUBADMIN: ${transferDto.description}`,
           relatedUserId: subadminId,
         },
       });

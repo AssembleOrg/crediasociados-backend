@@ -1,7 +1,6 @@
 import {
   IsNotEmpty,
   IsNumber,
-  IsPositive,
   IsEnum,
   IsString,
 } from 'class-validator';
@@ -18,13 +17,12 @@ export class TransferDto {
   managerId: string;
 
   @ApiProperty({
-    description: 'Monto a transferir',
+    description: 'Monto a transferir (puede ser negativo para retirar fondos del manager)',
     example: 100000,
     type: Number,
   })
   @IsNotEmpty()
   @IsNumber()
-  @IsPositive()
   amount: number;
 
   @ApiProperty({

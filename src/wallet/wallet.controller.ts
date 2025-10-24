@@ -76,7 +76,14 @@ export class WalletController {
 
   @Post('transfer')
   @Roles(UserRole.SUBADMIN)
-  @ApiOperation({ summary: 'Transferir dinero a un manager' })
+  @ApiOperation({
+    summary: 'Transferir dinero hacia/desde un manager',
+    description:
+      'Permite transferir fondos entre SUBADMIN y MANAGER. ' +
+      'Monto positivo: SUBADMIN → MANAGER. ' +
+      'Monto negativo: MANAGER → SUBADMIN (retiro de fondos). ' +
+      'El saldo de ninguna cartera puede quedar negativo.',
+  })
   @ApiResponse({
     status: 201,
     description: 'Transferencia realizada exitosamente',
