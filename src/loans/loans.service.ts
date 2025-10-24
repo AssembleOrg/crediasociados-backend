@@ -909,7 +909,21 @@ export class LoansService {
 
     return {
       message: 'Préstamo eliminado permanentemente',
-      loanTrack: loan.loanTrack,
+      deletedLoan: {
+        id: loan.id,
+        loanTrack: loan.loanTrack,
+        amount: Number(loan.amount),
+        clientId: loan.clientId,
+        clientName: loan.client.fullName,
+        clientDni: loan.client.dni,
+        status: loan.status,
+        createdAt: loan.createdAt,
+        totalPayments: loan.totalPayments,
+        paymentFrequency: loan.paymentFrequency,
+        baseInterestRate: Number(loan.baseInterestRate),
+        currency: loan.currency,
+        subLoansCount: loan.subLoans.length,
+      },
       montoDevuelto: montoADevolver,
       totalPrestamo,
       totalPagado,

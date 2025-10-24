@@ -62,7 +62,7 @@ export class PaymentsController {
     @Body() registerPaymentDto: RegisterPaymentDto,
   ) {
     return this.paymentsService.registerPayment(
-      req.user.sub,
+      req.user.id,
       req.user.role,
       registerPaymentDto,
     );
@@ -88,7 +88,7 @@ export class PaymentsController {
     @Body() bulkPaymentDto: BulkPaymentDto,
   ) {
     return this.paymentsService.registerBulkPayments(
-      req.user.sub,
+      req.user.id,
       req.user.role,
       bulkPaymentDto,
     );
@@ -129,7 +129,7 @@ export class PaymentsController {
   ) {
     return this.paymentsService.getSubLoanPayments(
       subLoanId,
-      req.user.sub,
+      req.user.id,
       req.user.role,
     );
   }

@@ -56,6 +56,8 @@ export class PaymentsService {
     }
 
     // Validar que el usuario tenga acceso
+
+    console.table({ userRole, userId });
     if (userRole === UserRole.MANAGER) {
       const hasAccess = subLoan.loan.client.managers.some(
         (m) => m.userId === userId,

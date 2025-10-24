@@ -36,8 +36,13 @@ export class AuditInterceptor implements NestInterceptor {
           `Response: ${method} ${url} - Duration: ${duration}ms - Status: Success`,
         );
 
+        // NO auditar operaciones READ (GET)
+        if (method === 'GET') {
+          return;
+        }
+
         // Determinar la acción y entidad basado en el método y endpoint
-        const auditInfo = this.determineAuditInfo(method, endpoint, body, params);
+        const auditInfo = this.determineAuditInfo(method, endpoint, body, params, data);
 
         if (auditInfo) {
           await this.auditService.log({
@@ -75,6 +80,7 @@ export class AuditInterceptor implements NestInterceptor {
     endpoint: string,
     body: any,
     params: any,
+    responseData: any,
   ): {
     action: AuditAction;
     entity: string;
@@ -98,6 +104,8 @@ export class AuditInterceptor implements NestInterceptor {
     else if (endpoint.includes('/loans')) entity = 'Loan';
     else if (endpoint.includes('/payments')) entity = 'Payment';
     else if (endpoint.includes('/wallet')) entity = 'Wallet';
+    else if (endpoint.includes('/daily-closure')) entity = 'DailyClosure';
+    else if (endpoint.includes('/sub-loan')) entity = 'SubLoan';
     else if (endpoint.includes('/auth')) {
       if (endpoint.includes('/login')) {
         return {
@@ -112,11 +120,26 @@ export class AuditInterceptor implements NestInterceptor {
     const action = actionMap[method] || AuditAction.READ;
     const entityId = params?.id;
 
-    // Preparar cambios si es CREATE o UPDATE
+    // Preparar cambios según el tipo de operación
     let changes: any = undefined;
-    if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+    
+    if (method === 'POST') {
+      // CREATE: Solo el estado después
       changes = {
         after: body,
+      };
+    } else if (method === 'PUT' || method === 'PATCH') {
+      // UPDATE: El estado después (el before debería capturarse en el servicio si es necesario)
+      changes = {
+        after: body,
+      };
+    } else if (method === 'DELETE') {
+      // DELETE: Capturar el estado BEFORE desde la respuesta del servicio
+      // La respuesta puede contener la data eliminada
+      const deletedData = responseData?.data || responseData;
+      
+      changes = {
+        before: deletedData,
       };
     }
 

@@ -56,7 +56,7 @@ export class DailyClosureController {
     @Body() createClosureDto: CreateClosureDto,
   ) {
     return this.dailyClosureService.createClosure(
-      req.user.sub,
+      req.user.id,
       req.user.role,
       createClosureDto,
     );
@@ -100,7 +100,7 @@ export class DailyClosureController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.dailyClosureService.getMyClosure(req.user.sub, paginationDto, {
+    return this.dailyClosureService.getMyClosure(req.user.id, paginationDto, {
       startDate,
       endDate,
     });
@@ -135,7 +135,7 @@ export class DailyClosureController {
   async getClosureById(@Request() req: any, @Param('id') id: string) {
     return this.dailyClosureService.getClosureById(
       id,
-      req.user.sub,
+      req.user.id,
       req.user.role,
     );
   }
@@ -168,7 +168,7 @@ export class DailyClosureController {
   async getClosureByDate(@Request() req: any, @Param('date') date: string) {
     return this.dailyClosureService.getClosureByDate(
       date,
-      req.user.sub,
+      req.user.id,
       req.user.role,
     );
   }
@@ -197,7 +197,7 @@ export class DailyClosureController {
   async getSubLoansByDate(@Request() req: any, @Param('date') date: string) {
     return this.dailyClosureService.getSubLoansByDate(
       date,
-      req.user.sub,
+      req.user.id,
       req.user.role,
     );
   }

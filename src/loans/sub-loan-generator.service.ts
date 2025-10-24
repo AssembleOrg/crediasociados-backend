@@ -89,40 +89,76 @@ export class SubLoanGeneratorService {
     firstDueDate?: Date,
   ): Date[] {
     const dueDates: Date[] = [];
-    let currentDate = firstDueDate || DateUtil.now().toJSDate();
-
-    // Si no hay fecha específica, usar la fecha actual
-    if (!firstDueDate) {
-      currentDate = DateUtil.now().toJSDate();
+    
+    // Determinar la fecha inicial
+    let startDate: Date;
+    
+    if (firstDueDate) {
+      // Si se especifica firstDueDate, usarla tal cual
+      startDate = new Date(firstDueDate);
+    } else {
+      // Si NO se especifica, usar el DÍA SIGUIENTE a hoy
+      const tomorrow = DateUtil.now().plus({ days: 1 }).toJSDate();
+      startDate = tomorrow;
+      
+      // Para pagos DIARIOS, la primera cuota es mañana
+      // Para pagos SEMANALES, QUINCENALES o MENSUALES, respetar el paymentDay si está especificado
+      if (paymentFrequency !== 'DAILY' && paymentDay) {
+        this.setToDayOfWeek(startDate, paymentDay);
+        
+        // Si el día ya pasó esta semana, mover a la próxima
+        const today = DateUtil.now().toJSDate();
+        if (startDate <= today) {
+          startDate.setDate(startDate.getDate() + 7);
+        }
+      }
     }
 
+    // Ajustar la fecha de inicio si cae en domingo
+    startDate = this.adjustSundayToMonday(startDate);
+
     for (let i = 0; i < totalPayments; i++) {
-      let dueDate = DateUtil.fromJSDate(currentDate).toJSDate();
+      let dueDate = new Date(startDate);
 
       // Ajustar la fecha según la frecuencia de pago
       switch (paymentFrequency) {
         case 'DAILY':
-          dueDate.setDate(dueDate.getDate() + i);
+          // Para pagos diarios, agregar días uno a uno
+          dueDate.setDate(startDate.getDate() + i);
+          // Ajustar domingos inmediatamente
+          dueDate = this.adjustSundayToMonday(dueDate);
           break;
 
         case 'WEEKLY':
-          dueDate.setDate(dueDate.getDate() + i * 7);
+          // Para pagos semanales, agregar 7 días por cada cuota
+          dueDate.setDate(startDate.getDate() + i * 7);
+          // Ajustar domingos
+          dueDate = this.adjustSundayToMonday(dueDate);
           break;
 
         case 'BIWEEKLY':
-          dueDate.setDate(dueDate.getDate() + i * 14);
+          // Para pagos quincenales, agregar 14 días por cada cuota
+          dueDate.setDate(startDate.getDate() + i * 14);
+          // Ajustar domingos
+          dueDate = this.adjustSundayToMonday(dueDate);
           break;
 
         case 'MONTHLY':
-          dueDate.setMonth(dueDate.getMonth() + i);
+          // Para pagos mensuales, agregar meses
+          dueDate.setMonth(startDate.getMonth() + i);
+          // Si el día no existe en el mes (ej: 31 de febrero), ajustar al último día del mes
+          if (dueDate.getDate() !== startDate.getDate()) {
+            dueDate.setDate(0); // Último día del mes anterior
+          }
+          // Ajustar domingos
+          dueDate = this.adjustSundayToMonday(dueDate);
           break;
       }
 
-      // Verificar si la fecha cae en domingo y ajustarla al lunes siguiente
-      dueDate = this.adjustSundayToMonday(dueDate);
-
-      // Verificar que no haya fechas duplicadas
-      dueDate = this.ensureUniqueDate(dueDate, dueDates);
+      // Verificar que no haya fechas duplicadas (solo necesario para DAILY que puede tener ajustes de domingo)
+      if (paymentFrequency === 'DAILY') {
+        dueDate = this.ensureUniqueDate(dueDate, dueDates);
+      }
 
       dueDates.push(dueDate);
     }
