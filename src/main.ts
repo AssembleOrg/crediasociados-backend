@@ -16,23 +16,23 @@ async function bootstrap() {
 
   // CORS configuration
   // Allow specific origins for security while enabling frontend integration
-  app.enableCors({
-    origin: [
-      'https://crediasociados-backend.netlify.app', // Production frontend
-      'https://finanzas-demo.netlify.app',
-      'http://localhost:3000', // Backend port
-      'http://localhost:3001', // Alternative backend port
-      'http://localhost:5173', // Vite default port
-      'http://localhost:8080', // Common dev port
-      'http://127.0.0.1:3000', // Localhost IP variants
-      'http://127.0.0.1:3001',
-      'http://127.0.0.1:5173',
-      'http://127.0.0.1:8080',
-    ],
-    credentials: true, // Allow cookies/auth headers
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  });
+  // app.enableCors({
+  //   origin: [
+  //     'https://crediasociados-backend.netlify.app', // Production frontend
+  //     'https://finanzas-demo.netlify.app',
+  //     'http://localhost:3000', // Backend port
+  //     'http://localhost:3001', // Alternative backend port
+  //     'http://localhost:5173', // Vite default port
+  //     'http://localhost:8080', // Common dev port
+  //     'http://127.0.0.1:3000', // Localhost IP variants
+  //     'http://127.0.0.1:3001',
+  //     'http://127.0.0.1:5173',
+  //     'http://127.0.0.1:8080',
+  //   ],
+  //   credentials: true, // Allow cookies/auth headers
+  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  //   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  // });
 
   // Global validation pipe
   app.useGlobalPipes(

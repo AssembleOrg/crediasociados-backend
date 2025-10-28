@@ -1,0 +1,774 @@
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { UserRole } from '@prisma/client';
+import {
+  CloseRouteDto,
+  UpdateRouteOrderDto,
+  GetRoutesQueryDto,
+  CollectionRouteResponseDto,
+  ExpenseDetailDto,
+} from './dto';
+import { Decimal } from '@prisma/client/runtime/library';
+
+@Injectable()
+export class CollectionRoutesService {
+  private readonly logger = new Logger(CollectionRoutesService.name);
+
+  constructor(private prisma: PrismaService) {}
+
+  /**
+   * Crear rutas de cobro para todos los managers con subloans activos para hoy
+   * Se ejecuta automáticamente a las 4:15 AM
+   */
+  async createDailyRoutes(): Promise<any> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Inicio del día
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999); // Fin del día
+
+    // Obtener todos los managers con subloans que vencen hoy
+    const managersWithSubLoans = await this.prisma.user.findMany({
+      where: {
+        role: UserRole.MANAGER,
+        deletedAt: null,
+        managedClients: {
+          some: {
+            deletedAt: null,
+            client: {
+              deletedAt: null,
+              loans: {
+                some: {
+                  deletedAt: null,
+                  status: { in: ['ACTIVE', 'APPROVED'] },
+                  subLoans: {
+                    some: {
+                      deletedAt: null,
+                      dueDate: {
+                        gte: today,
+                        lte: endOfDay,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        fullName: true,
+      },
+    });
+
+    const createdRoutes: any[] = [];
+
+    for (const manager of managersWithSubLoans) {
+      try {
+        // Verificar si ya existe una ruta para este manager en esta fecha
+        const existingRoute = await this.prisma.dailyCollectionRoute.findFirst({
+          where: {
+            managerId: manager.id,
+            routeDate: today,
+          },
+        });
+
+        if (existingRoute) {
+          this.logger.log(
+            `Ruta ya existe para manager ${manager.fullName} en fecha ${today.toISOString()}`,
+          );
+          continue;
+        }
+
+        // Obtener subloans que vencen hoy para este manager
+        const subLoans = await this.prisma.subLoan.findMany({
+          where: {
+            deletedAt: null,
+            dueDate: {
+              gte: today,
+              lte: endOfDay,
+            },
+            loan: {
+              deletedAt: null,
+              status: { in: ['ACTIVE', 'APPROVED'] },
+              client: {
+                deletedAt: null,
+                managers: {
+                  some: {
+                    userId: manager.id,
+                    deletedAt: null,
+                  },
+                },
+              },
+            },
+          },
+          include: {
+            loan: {
+              include: {
+                client: {
+                  select: {
+                    id: true,
+                    fullName: true,
+                    phone: true,
+                    address: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            dueDate: 'asc',
+          },
+        });
+
+        if (subLoans.length === 0) {
+          this.logger.log(
+            `No hay subloans para manager ${manager.fullName} en fecha ${today.toISOString()}`,
+          );
+          continue;
+        }
+
+        // Crear la ruta con sus items
+        const route = await this.prisma.$transaction(async (tx) => {
+          const newRoute = await tx.dailyCollectionRoute.create({
+            data: {
+              managerId: manager.id,
+              routeDate: today,
+              status: 'ACTIVE',
+              totalCollected: new Decimal(0),
+              totalExpenses: new Decimal(0),
+              netAmount: new Decimal(0),
+            },
+          });
+
+          // Crear items de la ruta
+          const itemsData = subLoans.map((subLoan, index) => ({
+            routeId: newRoute.id,
+            subLoanId: subLoan.id,
+            clientName: subLoan.loan.client.fullName,
+            clientPhone: subLoan.loan.client.phone,
+            clientAddress: subLoan.loan.client.address,
+            orderIndex: index,
+            amountCollected: new Decimal(0),
+            amountSpent: new Decimal(0),
+            netAmount: new Decimal(0),
+          }));
+
+          await tx.collectionRouteItem.createMany({
+            data: itemsData,
+          });
+
+          return newRoute;
+        });
+
+        createdRoutes.push({
+          managerId: manager.id,
+          managerName: manager.fullName,
+          routeId: route.id,
+          itemsCount: subLoans.length,
+        });
+
+        this.logger.log(
+          `Ruta creada para manager ${manager.fullName} con ${subLoans.length} items`,
+        );
+      } catch (error: any) {
+        this.logger.error(
+          `Error creando ruta para manager ${manager.fullName}:`,
+          error,
+        );
+      }
+    }
+
+    return {
+      message: `Se crearon ${createdRoutes.length} rutas de cobro`,
+      createdRoutes,
+      date: today,
+    };
+  }
+
+  /**
+   * Obtener la ruta activa del día para un manager
+   */
+  async getTodayActiveRoute(
+    userId: string,
+    userRole: UserRole,
+    managerId?: string,
+  ): Promise<CollectionRouteResponseDto> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Determinar el manager ID a buscar
+    let targetManagerId = userId;
+    if (managerId && (userRole === UserRole.SUBADMIN || userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN)) {
+      // Verificar que el manager existe y está bajo el subadmin
+      const manager = await this.prisma.user.findFirst({
+        where: {
+          id: managerId,
+          role: UserRole.MANAGER,
+          deletedAt: null,
+          ...(userRole === UserRole.SUBADMIN
+            ? { createdById: userId }
+            : {}),
+        },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado o sin acceso');
+      }
+
+      targetManagerId = managerId;
+    } else if (userRole !== UserRole.MANAGER) {
+      throw new BadRequestException(
+        'Debe especificar un managerId para este rol',
+      );
+    }
+
+    const route = await this.prisma.dailyCollectionRoute.findFirst({
+      where: {
+        managerId: targetManagerId,
+        routeDate: today,
+        status: 'ACTIVE',
+      },
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              include: {
+                loan: {
+                  select: {
+                    loanTrack: true,
+                    amount: true,
+                    currency: true,
+                  },
+                },
+                transactions: {
+                  where: {
+                    deletedAt: null,
+                  },
+                  select: {
+                    id: true,
+                    type: true,
+                    amount: true,
+                    description: true,
+                    transactionDate: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            orderIndex: 'asc',
+          },
+        },
+        manager: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!route) {
+      throw new NotFoundException(
+        'No hay ruta activa para hoy. Se creará automáticamente a las 4:15 AM',
+      );
+    }
+
+    return this.transformRouteToDto(route);
+  }
+
+  /**
+   * Obtener todas las rutas con filtros
+   */
+  async getRoutes(
+    userId: string,
+    userRole: UserRole,
+    query: GetRoutesQueryDto,
+  ): Promise<CollectionRouteResponseDto[]> {
+    const where: any = {};
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      where.managerId = userId;
+    } else if (userRole === UserRole.SUBADMIN) {
+      if (query.managerId) {
+        // Verificar que el manager está bajo este subadmin
+        const manager = await this.prisma.user.findFirst({
+          where: {
+            id: query.managerId,
+            role: UserRole.MANAGER,
+            createdById: userId,
+            deletedAt: null,
+          },
+        });
+
+        if (!manager) {
+          throw new ForbiddenException(
+            'No tienes acceso a las rutas de este manager',
+          );
+        }
+
+        where.managerId = query.managerId;
+      } else {
+        // Obtener todos los managers bajo este subadmin
+        const managers = await this.prisma.user.findMany({
+          where: {
+            role: UserRole.MANAGER,
+            createdById: userId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+
+        where.managerId = { in: managers.map((m) => m.id) };
+      }
+    } else if (query.managerId) {
+      where.managerId = query.managerId;
+    }
+
+    // Filtro de estado
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    // Filtros de fecha
+    if (query.dateFrom || query.dateTo) {
+      where.routeDate = {};
+      if (query.dateFrom) {
+        const dateFrom = new Date(query.dateFrom);
+        dateFrom.setHours(0, 0, 0, 0);
+        where.routeDate.gte = dateFrom;
+      }
+      if (query.dateTo) {
+        const dateTo = new Date(query.dateTo);
+        dateTo.setHours(23, 59, 59, 999);
+        where.routeDate.lte = dateTo;
+      }
+    }
+
+    const routes = await this.prisma.dailyCollectionRoute.findMany({
+      where,
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              include: {
+                loan: {
+                  select: {
+                    loanTrack: true,
+                    amount: true,
+                    currency: true,
+                  },
+                },
+                transactions: {
+                  where: {
+                    deletedAt: null,
+                  },
+                  select: {
+                    id: true,
+                    type: true,
+                    amount: true,
+                    description: true,
+                    transactionDate: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            orderIndex: 'asc',
+          },
+        },
+        manager: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+      orderBy: {
+        routeDate: 'desc',
+      },
+    });
+
+    return routes.map((route) => this.transformRouteToDto(route));
+  }
+
+  /**
+   * Actualizar el orden de los items de una ruta
+   */
+  async updateRouteOrder(
+    routeId: string,
+    userId: string,
+    userRole: UserRole,
+    updateDto: UpdateRouteOrderDto,
+  ): Promise<CollectionRouteResponseDto> {
+    // Verificar que la ruta existe y el usuario tiene acceso
+    const route = await this.prisma.dailyCollectionRoute.findUnique({
+      where: { id: routeId },
+      include: {
+        items: true,
+        manager: true,
+      },
+    });
+
+    if (!route) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    // Verificar acceso
+    if (userRole === UserRole.MANAGER && route.managerId !== userId) {
+      throw new ForbiddenException('No tienes acceso a esta ruta');
+    } else if (userRole === UserRole.SUBADMIN) {
+      // Verificar que el manager está bajo este subadmin
+      const manager = await this.prisma.user.findFirst({
+        where: {
+          id: route.managerId,
+          role: UserRole.MANAGER,
+          createdById: userId,
+          deletedAt: null,
+        },
+      });
+
+      if (!manager) {
+        throw new ForbiddenException('No tienes acceso a esta ruta');
+      }
+    }
+
+    // Verificar que la ruta está activa
+    if (route.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        'No se puede modificar el orden de una ruta cerrada',
+      );
+    }
+
+    // Actualizar el orden de los items
+    await this.prisma.$transaction(
+      updateDto.items.map((item) =>
+        this.prisma.collectionRouteItem.update({
+          where: { id: item.itemId },
+          data: { orderIndex: item.orderIndex },
+        }),
+      ),
+    );
+
+    // Obtener la ruta actualizada
+    return this.getTodayActiveRoute(userId, userRole, route.managerId);
+  }
+
+  /**
+   * Cerrar una ruta del día
+   */
+  async closeRoute(
+    routeId: string,
+    userId: string,
+    userRole: UserRole,
+    closeDto: CloseRouteDto,
+  ): Promise<CollectionRouteResponseDto> {
+    // Verificar que la ruta existe y el usuario tiene acceso
+    const route = await this.prisma.dailyCollectionRoute.findUnique({
+      where: { id: routeId },
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              include: {
+                transactions: {
+                  where: {
+                    deletedAt: null,
+                  },
+                },
+              },
+            },
+          },
+        },
+        manager: true,
+      },
+    });
+
+    if (!route) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    // Verificar acceso
+    if (userRole === UserRole.MANAGER && route.managerId !== userId) {
+      throw new ForbiddenException('No tienes acceso a esta ruta');
+    } else if (userRole === UserRole.SUBADMIN) {
+      const manager = await this.prisma.user.findFirst({
+        where: {
+          id: route.managerId,
+          role: UserRole.MANAGER,
+          createdById: userId,
+          deletedAt: null,
+        },
+      });
+
+      if (!manager) {
+        throw new ForbiddenException('No tienes acceso a esta ruta');
+      }
+    }
+
+    // Verificar que la ruta está activa
+    if (route.status === 'CLOSED') {
+      throw new BadRequestException('Esta ruta ya está cerrada');
+    }
+
+    // Calcular totales actualizados basados en las transacciones
+    let totalCollected = new Decimal(0);
+    let totalExpenses = new Decimal(0);
+
+    const updatedItems: any[] = [];
+
+    for (const item of route.items) {
+      // Calcular montos del item desde transactions
+      const incomeTransactions = item.subLoan.transactions.filter(
+        (t) => t.type === 'INCOME',
+      );
+      const expenseTransactions = item.subLoan.transactions.filter(
+        (t) => t.type === 'EXPENSE',
+      );
+
+      const itemCollected = incomeTransactions.reduce(
+        (sum, t) => sum.add(t.amount),
+        new Decimal(0),
+      );
+      const itemSpent = expenseTransactions.reduce(
+        (sum, t) => sum.add(t.amount),
+        new Decimal(0),
+      );
+      const itemNet = itemCollected.sub(itemSpent);
+
+      totalCollected = totalCollected.add(itemCollected);
+      totalExpenses = totalExpenses.add(itemSpent);
+
+      updatedItems.push({
+        id: item.id,
+        amountCollected: itemCollected,
+        amountSpent: itemSpent,
+        netAmount: itemNet,
+      });
+    }
+
+    const netAmount = totalCollected.sub(totalExpenses);
+
+    // Actualizar la ruta y sus items en una transacción
+    await this.prisma.$transaction([
+      ...updatedItems.map((item) =>
+        this.prisma.collectionRouteItem.update({
+          where: { id: item.id },
+          data: {
+            amountCollected: item.amountCollected,
+            amountSpent: item.amountSpent,
+            netAmount: item.netAmount,
+          },
+        }),
+      ),
+      this.prisma.dailyCollectionRoute.update({
+        where: { id: routeId },
+        data: {
+          status: 'CLOSED',
+          totalCollected,
+          totalExpenses,
+          netAmount,
+          notes: closeDto.notes,
+          closedAt: new Date(),
+        },
+      }),
+    ]);
+
+    // Obtener la ruta cerrada completa
+    const closedRoute = await this.prisma.dailyCollectionRoute.findUnique({
+      where: { id: routeId },
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              include: {
+                loan: {
+                  select: {
+                    loanTrack: true,
+                    amount: true,
+                    currency: true,
+                  },
+                },
+                transactions: {
+                  where: {
+                    deletedAt: null,
+                  },
+                  select: {
+                    id: true,
+                    type: true,
+                    amount: true,
+                    description: true,
+                    transactionDate: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            orderIndex: 'asc',
+          },
+        },
+        manager: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    return this.transformRouteToDto(closedRoute!);
+  }
+
+  /**
+   * Obtener una ruta específica por ID
+   */
+  async getRouteById(
+    routeId: string,
+    userId: string,
+    userRole: UserRole,
+  ): Promise<CollectionRouteResponseDto> {
+    const route = await this.prisma.dailyCollectionRoute.findUnique({
+      where: { id: routeId },
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              include: {
+                loan: {
+                  select: {
+                    loanTrack: true,
+                    amount: true,
+                    currency: true,
+                  },
+                },
+                transactions: {
+                  where: {
+                    deletedAt: null,
+                  },
+                  select: {
+                    id: true,
+                    type: true,
+                    amount: true,
+                    description: true,
+                    transactionDate: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            orderIndex: 'asc',
+          },
+        },
+        manager: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!route) {
+      throw new NotFoundException('Ruta no encontrada');
+    }
+
+    // Verificar acceso
+    if (userRole === UserRole.MANAGER && route.managerId !== userId) {
+      throw new ForbiddenException('No tienes acceso a esta ruta');
+    } else if (userRole === UserRole.SUBADMIN) {
+      const manager = await this.prisma.user.findFirst({
+        where: {
+          id: route.managerId,
+          role: UserRole.MANAGER,
+          createdById: userId,
+          deletedAt: null,
+        },
+      });
+
+      if (!manager) {
+        throw new ForbiddenException('No tienes acceso a esta ruta');
+      }
+    }
+
+    return this.transformRouteToDto(route);
+  }
+
+  /**
+   * Helper: Transformar ruta de Prisma a DTO
+   */
+  private transformRouteToDto(route: any): CollectionRouteResponseDto {
+    return {
+      id: route.id,
+      managerId: route.managerId,
+      routeDate: route.routeDate,
+      status: route.status,
+      totalCollected: Number(route.totalCollected),
+      totalExpenses: Number(route.totalExpenses),
+      netAmount: Number(route.netAmount),
+      notes: route.notes,
+      closedAt: route.closedAt,
+      createdAt: route.createdAt,
+      updatedAt: route.updatedAt,
+      manager: route.manager,
+      items: route.items.map((item: any) => {
+        const expenseDetails: ExpenseDetailDto[] = item.subLoan.transactions
+          .filter((t: any) => t.type === 'EXPENSE')
+          .map((t: any) => ({
+            transactionId: t.id,
+            amount: Number(t.amount),
+            description: t.description,
+            transactionDate: t.transactionDate,
+          }));
+
+        return {
+          id: item.id,
+          routeId: item.routeId,
+          subLoanId: item.subLoanId,
+          clientName: item.clientName,
+          clientPhone: item.clientPhone,
+          clientAddress: item.clientAddress,
+          orderIndex: item.orderIndex,
+          amountCollected: Number(item.amountCollected),
+          amountSpent: Number(item.amountSpent),
+          netAmount: Number(item.netAmount),
+          notes: item.notes,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+          subLoan: item.subLoan
+            ? {
+                id: item.subLoan.id,
+                paymentNumber: item.subLoan.paymentNumber,
+                amount: Number(item.subLoan.amount),
+                totalAmount: Number(item.subLoan.totalAmount),
+                paidAmount: Number(item.subLoan.paidAmount),
+                status: item.subLoan.status,
+                dueDate: item.subLoan.dueDate,
+                loan: item.subLoan.loan,
+              }
+            : undefined,
+          expenseDetails,
+        };
+      }),
+    };
+  }
+}
+

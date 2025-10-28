@@ -932,4 +932,120 @@ export class LoansService {
         : Number(managerWallet.balance),
     };
   }
+
+  /**
+   * Obtener estadísticas de préstamos nuevos por período (semana/mes)
+   */
+  async getLoanStatsByPeriod(
+    userId: string,
+    userRole: UserRole,
+    dateFrom?: string,
+    dateTo?: string,
+    groupBy: 'week' | 'month' = 'week',
+  ) {
+    // Determinar préstamos accesibles según rol
+    let whereClause: any = {
+      deletedAt: null,
+    };
+
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER solo ve sus préstamos
+      whereClause.client = {
+        managers: {
+          some: {
+            userId,
+            deletedAt: null,
+          },
+        },
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN ve préstamos de sus managers
+      const managers = await this.prisma.user.findMany({
+        where: {
+          role: UserRole.MANAGER,
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      const managerIds = managers.map((m) => m.id);
+
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: { in: managerIds },
+            deletedAt: null,
+          },
+        },
+      };
+    }
+    // ADMIN/SUPERADMIN: no filtran, ven todos
+
+    // Filtros de fecha
+    if (dateFrom || dateTo) {
+      whereClause.createdAt = {};
+      if (dateFrom) {
+        whereClause.createdAt.gte = DateUtil.parseToDate(dateFrom);
+      }
+      if (dateTo) {
+        whereClause.createdAt.lte = DateUtil.parseToDate(dateTo);
+      }
+    }
+
+    const loans = await this.prisma.loan.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        amount: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Agrupar por período
+    const statsMap = new Map<string, { count: number; amount: number }>();
+
+    for (const loan of loans) {
+      let periodKey: string;
+
+      if (groupBy === 'week') {
+        // Formato: "Sem. DD/MM" (inicio de semana) - en zona horaria Argentina
+        const dt = DateUtil.fromPrismaDate(loan.createdAt);
+        const startOfWeek = dt.startOf('week'); // Luxon usa lunes como inicio de semana
+
+        periodKey = `Sem. ${startOfWeek.day.toString().padStart(2, '0')}/${startOfWeek.month.toString().padStart(2, '0')}`;
+      } else {
+        // Formato: "YYYY-MM" - en zona horaria Argentina
+        const dt = DateUtil.fromPrismaDate(loan.createdAt);
+        periodKey = `${dt.year}-${dt.month.toString().padStart(2, '0')}`;
+      }
+
+      const existing = statsMap.get(periodKey) || { count: 0, amount: 0 };
+      existing.count += 1;
+      existing.amount += Number(loan.amount);
+      statsMap.set(periodKey, existing);
+    }
+
+    // Convertir a array y ordenar
+    const stats = Array.from(statsMap.entries())
+      .map(([period, data]) => ({
+        period,
+        count: data.count,
+        amount: data.amount,
+      }))
+      .sort((a, b) => a.period.localeCompare(b.period));
+
+    const totalAmount = loans.reduce(
+      (sum, loan) => sum + Number(loan.amount),
+      0,
+    );
+
+    return {
+      total: loans.length,
+      totalAmount,
+      groupBy,
+      stats,
+    };
+  }
 }

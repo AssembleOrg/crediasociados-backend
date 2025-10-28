@@ -18,6 +18,7 @@ import { WalletModule } from './wallet/wallet.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DailyClosureModule } from './daily-closure/daily-closure.module';
 import { AuditModule } from './audit/audit.module';
+import { CollectionRoutesModule } from './collection-routes/collection-routes.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -51,6 +52,7 @@ import configuration from './config/configuration';
     PaymentsModule,
     DailyClosureModule,
     AuditModule,
+    CollectionRoutesModule,
   ],
   controllers: [AppController],
   providers: [

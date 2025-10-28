@@ -463,4 +463,71 @@ export class LoansController {
   async permanentlyDeleteLoan(@Param('id') id: string, @Request() req) {
     return this.loansService.permanentlyDeleteLoan(id, req.user.id);
   }
+
+  @Get('stats/by-period')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener estadísticas de préstamos nuevos por período',
+    description:
+      'Retorna el número de préstamos nuevos y monto total agrupados por semana o mes. ' +
+      'MANAGER ve sus préstamos, SUBADMIN ve préstamos de sus managers, ADMIN/SUPERADMIN ven todos.',
+  })
+  @ApiQuery({
+    name: 'dateFrom',
+    required: false,
+    description: 'Fecha desde (ISO 8601)',
+    example: '2025-01-01T00:00:00.000Z',
+  })
+  @ApiQuery({
+    name: 'dateTo',
+    required: false,
+    description: 'Fecha hasta (ISO 8601)',
+    example: '2025-12-31T23:59:59.999Z',
+  })
+  @ApiQuery({
+    name: 'groupBy',
+    required: false,
+    enum: ['week', 'month'],
+    description: 'Agrupar por semana o mes',
+    example: 'week',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estadísticas obtenidas exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        total: { type: 'number', example: 50 },
+        totalAmount: { type: 'number', example: 5000000 },
+        groupBy: { type: 'string', example: 'week' },
+        stats: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              period: { type: 'string', example: 'Sem. 19/10' },
+              count: { type: 'number', example: 5 },
+              amount: { type: 'number', example: 500000 },
+            },
+          },
+        },
+      },
+    },
+  })
+  async getLoanStatsByPeriod(
+    @Request() req,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('groupBy') groupBy: 'week' | 'month' = 'week',
+  ) {
+    return this.loansService.getLoanStatsByPeriod(
+      req.user.id,
+      req.user.role,
+      dateFrom,
+      dateTo,
+      groupBy,
+    );
+  }
 }

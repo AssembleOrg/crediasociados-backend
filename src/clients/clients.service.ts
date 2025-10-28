@@ -385,16 +385,15 @@ export class ClientsService {
       );
     }
 
-    // Soft delete del cliente
-    await this.prisma.client.update({
-      where: { id },
-      data: { deletedAt: DateUtil.now().toJSDate() },
+    // Hard delete - elimina permanentemente el cliente y sus relaciones
+    // Primero eliminar la relación client-manager
+    await this.prisma.clientManager.delete({
+      where: { id: clientManager.id },
     });
 
-    // Soft delete de la relación client-manager
-    await this.prisma.clientManager.update({
-      where: { id: clientManager.id },
-      data: { deletedAt: DateUtil.now().toJSDate() },
+    // Luego eliminar el cliente
+    await this.prisma.client.delete({
+      where: { id },
     });
 
     return { message: 'Cliente eliminado exitosamente' };
@@ -583,6 +582,108 @@ export class ClientsService {
     return {
       totalInactiveClients,
       managerDetails: validManagerDetails,
+    };
+  }
+
+  /**
+   * Obtener estadísticas de clientes nuevos por período (semana/mes)
+   */
+  async getClientStatsByPeriod(
+    userId: string,
+    userRole: UserRole,
+    dateFrom?: string,
+    dateTo?: string,
+    groupBy: 'week' | 'month' = 'week',
+  ) {
+    // Determinar clientes accesibles
+    let clientIds: string[] = [];
+
+    if (userRole === UserRole.MANAGER) {
+      clientIds = await this.getManagedClientIds(userId);
+    } else if (userRole === UserRole.SUBADMIN) {
+      const managers = await this.prisma.user.findMany({
+        where: {
+          role: UserRole.MANAGER,
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      for (const manager of managers) {
+        const managerClients = await this.getManagedClientIds(manager.id);
+        clientIds.push(...managerClients);
+      }
+    } else {
+      // ADMIN/SUPERADMIN: todos los clientes
+      const allClients = await this.prisma.client.findMany({
+        where: { deletedAt: null },
+        select: { id: true },
+      });
+      clientIds = allClients.map((c) => c.id);
+    }
+
+    // Filtros de fecha
+    const whereClause: any = {
+      id: { in: clientIds },
+      deletedAt: null,
+    };
+
+    if (dateFrom || dateTo) {
+      whereClause.createdAt = {};
+      if (dateFrom) {
+        whereClause.createdAt.gte = DateUtil.parseToDate(dateFrom);
+      }
+      if (dateTo) {
+        whereClause.createdAt.lte = DateUtil.parseToDate(dateTo);
+      }
+    }
+
+    const clients = await this.prisma.client.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Agrupar por período
+    const statsMap = new Map<string, number>();
+
+    for (const client of clients) {
+      let periodKey: string;
+
+      if (groupBy === 'week') {
+        // Formato: "Sem. DD/MM" (inicio de semana) - en zona horaria Argentina
+        const dt = DateUtil.fromPrismaDate(client.createdAt);
+        const startOfWeek = dt.startOf('week'); // Luxon usa lunes como inicio de semana
+
+        periodKey = `Sem. ${startOfWeek.day.toString().padStart(2, '0')}/${startOfWeek.month.toString().padStart(2, '0')}`;
+      } else {
+        // Formato: "YYYY-MM" - en zona horaria Argentina
+        const dt = DateUtil.fromPrismaDate(client.createdAt);
+        periodKey = `${dt.year}-${dt.month.toString().padStart(2, '0')}`;
+      }
+
+      statsMap.set(periodKey, (statsMap.get(periodKey) || 0) + 1);
+    }
+
+    // Convertir a array y ordenar
+    const stats = Array.from(statsMap.entries())
+      .map(([period, count]) => ({ period, count }))
+      .sort((a, b) => {
+        if (groupBy === 'week') {
+          // Extraer fechas para ordenar correctamente
+          return a.period.localeCompare(b.period);
+        }
+        return a.period.localeCompare(b.period);
+      });
+
+    return {
+      total: clients.length,
+      groupBy,
+      stats,
     };
   }
 }

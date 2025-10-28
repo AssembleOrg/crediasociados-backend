@@ -241,7 +241,7 @@ export class ClientsController {
 
   @Delete(':id')
   @Roles(UserRole.MANAGER)
-  @ApiOperation({ summary: 'Delete a client (MANAGER only - soft delete)' })
+  @ApiOperation({ summary: 'Delete a client permanently (MANAGER only)' })
   @ApiParam({ name: 'id', description: 'Client ID', example: 'cuid123' })
   @ApiResponse({
     status: 200,
@@ -294,6 +294,69 @@ export class ClientsController {
     return this.clientsService.getInactiveClientsReport(
       currentUser.id,
       currentUser.role,
+    );
+  }
+
+  @Get('stats/by-period')
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener estadísticas de clientes nuevos por período',
+    description:
+      'Retorna el número de clientes nuevos agrupados por semana o mes. ' +
+      'MANAGER ve sus clientes, SUBADMIN ve clientes de sus managers, ADMIN/SUPERADMIN ven todos.',
+  })
+  @ApiQuery({
+    name: 'dateFrom',
+    required: false,
+    description: 'Fecha desde (ISO 8601)',
+    example: '2025-01-01T00:00:00.000Z',
+  })
+  @ApiQuery({
+    name: 'dateTo',
+    required: false,
+    description: 'Fecha hasta (ISO 8601)',
+    example: '2025-12-31T23:59:59.999Z',
+  })
+  @ApiQuery({
+    name: 'groupBy',
+    required: false,
+    enum: ['week', 'month'],
+    description: 'Agrupar por semana o mes',
+    example: 'week',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estadísticas obtenidas exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        total: { type: 'number', example: 50 },
+        groupBy: { type: 'string', example: 'week' },
+        stats: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              period: { type: 'string', example: 'Sem. 19/10' },
+              count: { type: 'number', example: 5 },
+            },
+          },
+        },
+      },
+    },
+  })
+  async getClientStatsByPeriod(
+    @CurrentUser() currentUser: any,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('groupBy') groupBy: 'week' | 'month' = 'week',
+  ) {
+    return this.clientsService.getClientStatsByPeriod(
+      currentUser.id,
+      currentUser.role,
+      dateFrom,
+      dateTo,
+      groupBy,
     );
   }
 }

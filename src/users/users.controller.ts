@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -115,12 +116,31 @@ export class UsersController {
 
   @Delete(':id')
   @Roles(UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.SUBADMIN)
-  @ApiOperation({ summary: 'Delete a user (soft delete)' })
+  @ApiOperation({ summary: 'Delete a user permanently' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User deleted successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async remove(@Param('id') id: string): Promise<void> {
     return this.usersService.remove(id);
+  }
+
+  @Get('created')
+  @Roles(UserRole.ADMIN, UserRole.SUBADMIN)
+  @ApiOperation({ 
+    summary: 'Get users created by the current authenticated user',
+    description: 'Returns all users created by the current user (ADMIN gets SUBADMIN list, SUBADMIN gets MANAGER list)'
+  })
+  @ApiQuery({ name: 'role', required: false, enum: ['SUBADMIN', 'MANAGER'], description: 'Filter by role' })
+  @ApiResponse({
+    status: 200,
+    description: 'Created users retrieved successfully',
+    type: [UserResponseDto],
+  })
+  async getMyCreatedUsers(
+    @Req() req,
+    @Query('role') role?: string,
+  ): Promise<UserResponseDto[]> {
+    return this.usersService.getCreatedUsers(req.user.id);
   }
 
   @Get(':id/created-users')
@@ -498,5 +518,37 @@ export class UsersController {
   })
   async getManagerDashboard(@CurrentUser() currentUser: any) {
     return this.usersService.getManagerDashboard(currentUser.id);
+  }
+
+  @Post(':id/recalculate-quota')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Recalcular la cuota usada (usedClientQuota) de un usuario',
+    description:
+      'Recalcula el usedClientQuota sumando las clientQuota de todos los usuarios que este usuario creó. ' +
+      'Útil para corregir inconsistencias.',
+  })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Cuota recalculada exitosamente',
+    schema: {
+      properties: {
+        message: { type: 'string' },
+        previousUsedQuota: { type: 'number' },
+        newUsedQuota: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  async recalculateUserQuota(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ) {
+    return this.usersService.recalculateUserQuota(id, currentUser);
   }
 }

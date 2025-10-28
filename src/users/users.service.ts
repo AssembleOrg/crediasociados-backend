@@ -228,6 +228,16 @@ export class UsersService {
   ): Promise<UserResponseDto> {
     const existingUser = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        phone: true,
+        role: true,
+        clientQuota: true,
+        usedClientQuota: true,
+        createdById: true,
+      },
     });
 
     if (!existingUser) {
@@ -256,21 +266,70 @@ export class UsersService {
       updateData.password = await bcrypt.hash(updateUserDto.password, 10);
     }
 
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        phone: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    // Si se está actualizando clientQuota de un MANAGER o SUBADMIN, recalcular usedClientQuota del creador
+    const isUpdatingQuota = updateUserDto.clientQuota !== undefined;
+    const quotaDifference = isUpdatingQuota
+      ? (updateUserDto.clientQuota || 0) - existingUser.clientQuota
+      : 0;
+
+    // Usar transacción para actualizar el usuario y su creador si es necesario
+    const user = await this.prisma.$transaction(async (tx) => {
+      // Actualizar el usuario
+      const updatedUser = await tx.user.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          phone: true,
+          role: true,
+          clientQuota: true,
+          usedClientQuota: true,
+          createdAt: true,
+          updatedAt: true,
+          wallet: {
+            select: {
+              id: true,
+              balance: true,
+              currency: true,
+            },
+          },
+        },
+      });
+
+      // Si cambió la clientQuota y tiene un creador, actualizar usedClientQuota del creador
+      if (isUpdatingQuota && existingUser.createdById) {
+        const creator = await tx.user.findUnique({
+          where: { id: existingUser.createdById },
+          select: { id: true, usedClientQuota: true },
+        });
+
+        if (creator) {
+          await tx.user.update({
+            where: { id: creator.id },
+            data: {
+              usedClientQuota: creator.usedClientQuota + quotaDifference,
+            },
+          });
+        }
+      }
+
+      return updatedUser;
     });
 
-    return convertPrismaUserToResponse(user);
+    const response = convertPrismaUserToResponse(user);
+
+    // Agregar información de wallet si existe
+    if (user.wallet) {
+      response.wallet = {
+        id: user.wallet.id,
+        balance: Number(user.wallet.balance),
+        currency: user.wallet.currency,
+      };
+    }
+
+    return response;
   }
 
   async remove(id: string): Promise<void> {
@@ -282,10 +341,79 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    await this.prisma.user.update({
+    await this.prisma.user.delete({
       where: { id },
-      data: { deletedAt: DateUtil.now().toJSDate() },
     });
+  }
+
+  /**
+   * Recalcula el usedClientQuota de un usuario sumando las clientQuota de todos sus usuarios creados
+   */
+  async recalculateUserQuota(
+    userId: string,
+    currentUser: any,
+  ): Promise<{ message: string; previousUsedQuota: number; newUsedQuota: number }> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: {
+        id: true,
+        usedClientQuota: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Validar permisos: solo puede recalcular su propia cuota o la de sus subordinados
+    const currentUserRole = convertPrismaUserRole(currentUser.role);
+    if (
+      currentUserRole !== UserRole.ADMIN &&
+      currentUserRole !== UserRole.SUPERADMIN &&
+      currentUser.id !== userId
+    ) {
+      // Si es SUBADMIN, verificar que el usuario sea suyo
+      const targetUser = await this.prisma.user.findFirst({
+        where: { id: userId, createdById: currentUser.id, deletedAt: null },
+      });
+
+      if (!targetUser) {
+        throw new ForbiddenException(
+          'No tienes permisos para recalcular la cuota de este usuario',
+        );
+      }
+    }
+
+    // Calcular la suma de clientQuota de todos los usuarios creados por este usuario
+    const createdUsers = await this.prisma.user.findMany({
+      where: {
+        createdById: userId,
+        deletedAt: null,
+      },
+      select: {
+        clientQuota: true,
+      },
+    });
+
+    const newUsedQuota = createdUsers.reduce(
+      (sum, createdUser) => sum + createdUser.clientQuota,
+      0,
+    );
+
+    // Actualizar el usedClientQuota
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        usedClientQuota: newUsedQuota,
+      },
+    });
+
+    return {
+      message: 'Cuota recalculada exitosamente',
+      previousUsedQuota: user.usedClientQuota,
+      newUsedQuota,
+    };
   }
 
   async getCreatedUsers(userId: string): Promise<UserResponseDto[]> {
@@ -1140,8 +1268,10 @@ export class UsersService {
       );
     }
 
-    // 4. Valor de Cartera: Préstamos activos + saldo de wallet
-    let totalPrestamosActivos = 0;
+    // 4. Valor de Cartera: Capital Asignado + Total de Intereses de Préstamos Activos
+    // No se incluye el capital disponible porque ese ya está en el capitalAsignado
+    // Solo se suman los intereses pendientes de cobrar de los préstamos activos
+    let totalInteresesPrestamosActivos = 0;
     if (loanIds.length > 0) {
       const prestamosActivos = await this.prisma.loan.findMany({
         where: {
@@ -1149,15 +1279,31 @@ export class UsersService {
           status: 'ACTIVE',
           deletedAt: null,
         },
+        include: {
+          subLoans: {
+            where: {
+              status: {
+                in: ['PENDING', 'PARTIAL', 'OVERDUE'],
+              },
+            },
+            select: {
+              totalAmount: true, // Monto total de la cuota (capital + interés)
+              amount: true,      // Monto del capital de la cuota
+            },
+          },
+        },
       });
 
-      totalPrestamosActivos = prestamosActivos.reduce(
-        (sum, loan) => sum + Number(loan.amount),
-        0,
-      );
+      // Calcular solo los intereses pendientes sumando (totalAmount - amount) de cada subloan
+      for (const loan of prestamosActivos) {
+        for (const subLoan of loan.subLoans) {
+          const interesCuota = Number(subLoan.totalAmount) - Number(subLoan.amount);
+          totalInteresesPrestamosActivos += interesCuota;
+        }
+      }
     }
 
-    const valorCartera = totalPrestamosActivos + capitalDisponible;
+    const valorCartera = capitalAsignado + totalInteresesPrestamosActivos;
 
     return {
       capitalDisponible,

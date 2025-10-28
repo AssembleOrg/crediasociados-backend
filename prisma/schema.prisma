@@ -8,25 +8,26 @@ datasource db {
 }
 
 model User {
-  id                 String              @id @default(cuid())
-  email              String              @unique
+  id                 String                  @id @default(cuid())
+  email              String                  @unique
   password           String
   phone              String?
   fullName           String
-  role               UserRole            @default(MANAGER)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  role               UserRole                @default(MANAGER)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
   deletedAt          DateTime?
   createdById        String?
-  clientQuota        Int                 @default(0)
-  usedClientQuota    Int                 @default(0)
+  clientQuota        Int                     @default(0)
+  usedClientQuota    Int                     @default(0)
   managedClients     ClientManager[]
   refreshTokens      RefreshToken[]
   wallet             Wallet?
   dailyClosures      DailyClosure[]
   walletTransactions WalletTransaction[]
-  createdBy          User?               @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers       User[]              @relation("UserCreatedBy")
+  collectionRoutes   DailyCollectionRoute[]  @relation("ManagerCollectionRoutes")
+  createdBy          User?                   @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers       User[]                  @relation("UserCreatedBy")
 
   @@map("users")
 }
@@ -102,23 +103,24 @@ model Loan {
 }
 
 model SubLoan {
-  id             String        @id @default(cuid())
-  loanId         String
-  paymentNumber  Int
-  amount         Decimal       @db.Decimal(40, 2)
-  totalAmount    Decimal       @db.Decimal(40, 2)
-  status         SubLoanStatus @default(PENDING)
-  dueDate        DateTime
-  paidDate       DateTime?
-  paidAmount     Decimal       @default(0) @db.Decimal(40, 2)
-  daysOverdue    Int           @default(0)
-  paymentHistory Json?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
-  loan           Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  transactions   Transaction[]
-  payments       Payment[]
+  id                  String                @id @default(cuid())
+  loanId              String
+  paymentNumber       Int
+  amount              Decimal               @db.Decimal(40, 2)
+  totalAmount         Decimal               @db.Decimal(40, 2)
+  status              SubLoanStatus         @default(PENDING)
+  dueDate             DateTime
+  paidDate            DateTime?
+  paidAmount          Decimal               @default(0) @db.Decimal(40, 2)
+  daysOverdue         Int                   @default(0)
+  paymentHistory      Json?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  deletedAt           DateTime?
+  loan                Loan                  @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  transactions        Transaction[]
+  payments            Payment[]
+  collectionRouteItem CollectionRouteItem[]
 
   @@unique([loanId, paymentNumber])
   @@map("sub_loans")
@@ -398,4 +400,68 @@ model HttpLog {
   @@index([userId])
   @@index([createdAt])
   @@index([endpoint])
+}
+
+model DailyCollectionRoute {
+  id                String                 @id @default(cuid())
+  managerId         String
+  routeDate         DateTime // Fecha de la ruta (sin hora)
+  status            CollectionRouteStatus  @default(ACTIVE)
+  totalCollected    Decimal                @default(0) @db.Decimal(40, 2)
+  totalExpenses     Decimal                @default(0) @db.Decimal(40, 2)
+  netAmount         Decimal                @default(0) @db.Decimal(40, 2)
+  notes             String?
+  closedAt          DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  manager           User                   @relation("ManagerCollectionRoutes", fields: [managerId], references: [id], onDelete: Cascade)
+  items             CollectionRouteItem[]
+  expenses          RouteExpense[]
+
+  @@unique([managerId, routeDate])
+  @@map("daily_collection_routes")
+  @@index([managerId])
+  @@index([routeDate])
+  @@index([status])
+}
+
+model CollectionRouteItem {
+  id                  String                @id @default(cuid())
+  routeId             String
+  subLoanId           String?               // Nullable para preservar histórico si se elimina el subloan
+  clientName          String
+  clientPhone         String?
+  clientAddress       String?
+  orderIndex          Int                   @default(0)
+  amountCollected     Decimal               @default(0) @db.Decimal(40, 2)
+  notes               String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  route               DailyCollectionRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  subLoan             SubLoan?              @relation(fields: [subLoanId], references: [id], onDelete: SetNull)
+
+  @@map("collection_route_items")
+  @@index([routeId])
+  @@index([subLoanId])
+  @@index([orderIndex])
+}
+
+model RouteExpense {
+  id          String                @id @default(cuid())
+  routeId     String
+  category    ExpenseCategory
+  amount      Decimal               @db.Decimal(40, 2)
+  description String
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  route       DailyCollectionRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@map("route_expenses")
+  @@index([routeId])
+  @@index([category])
+}
+
+enum CollectionRouteStatus {
+  ACTIVE
+  CLOSED
 }

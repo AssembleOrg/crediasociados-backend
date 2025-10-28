@@ -22,7 +22,7 @@ export class SubLoanGeneratorService {
     firstDueDate?: Date,
     prismaTransaction?: Prisma.TransactionClient,
   ): Promise<void> {
-    const { totalPayments, paymentFrequency, paymentDay, amount } = loanData;
+    const { totalPayments, paymentFrequency, paymentDay, amount, baseInterestRate } = loanData;
 
     // Use transaction instance if provided, otherwise use the service's prisma instance
     const prismaClient = prismaTransaction || this.prisma;
@@ -43,8 +43,17 @@ export class SubLoanGeneratorService {
 
     console.log('Loan found:', existingLoan.id);
 
-    // Calcular monto por SubLoan
+    // Calcular monto por SubLoan (solo capital)
     const amountPerSubLoan = Number(amount) / totalPayments;
+
+    // Calcular interés total del préstamo
+    const totalInterest = Number(amount) * Number(baseInterestRate);
+    
+    // Calcular interés por cuota
+    const interestPerSubLoan = totalInterest / totalPayments;
+    
+    // Total por cuota = capital + interés
+    const totalAmountPerSubLoan = amountPerSubLoan + interestPerSubLoan;
 
     // Calcular fechas de vencimiento
     const dueDates = this.calculateDueDates(
@@ -58,8 +67,8 @@ export class SubLoanGeneratorService {
     const subLoansData = dueDates.map((dueDate, index) => ({
       loanId,
       paymentNumber: index + 1,
-      amount: new Prisma.Decimal(amountPerSubLoan),
-      totalAmount: new Prisma.Decimal(amountPerSubLoan),
+      amount: new Prisma.Decimal(amountPerSubLoan.toFixed(2)),
+      totalAmount: new Prisma.Decimal(totalAmountPerSubLoan.toFixed(2)),
       status: SubLoanStatus.PENDING,
       dueDate,
       paidAmount: new Prisma.Decimal(0),
@@ -70,6 +79,14 @@ export class SubLoanGeneratorService {
     console.log('Creating subloans for loan:', loanId);
     console.log('Number of subloans to create:', subLoansData.length);
     console.log('First subloan data:', subLoansData[0]);
+    console.log('Interest calculation:', {
+      loanAmount: amount,
+      baseInterestRate,
+      totalInterest,
+      interestPerSubLoan,
+      amountPerSubLoan,
+      totalAmountPerSubLoan,
+    });
 
     // Crear todos los SubLoans en una sola operación
     await prismaClient.subLoan.createMany({
@@ -94,10 +111,10 @@ export class SubLoanGeneratorService {
     let startDate: Date;
     
     if (firstDueDate) {
-      // Si se especifica firstDueDate, usarla tal cual
-      startDate = new Date(firstDueDate);
+      // Si se especifica firstDueDate, convertirla a zona horaria de Argentina
+      startDate = DateUtil.fromPrismaDate(firstDueDate).toJSDate();
     } else {
-      // Si NO se especifica, usar el DÍA SIGUIENTE a hoy
+      // Si NO se especifica, usar el DÍA SIGUIENTE a hoy (en zona horaria Argentina)
       const tomorrow = DateUtil.now().plus({ days: 1 }).toJSDate();
       startDate = tomorrow;
       

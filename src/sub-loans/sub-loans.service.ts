@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserRole } from '../common/enums';
 
 @Injectable()
 export class SubLoansService {
@@ -146,6 +147,40 @@ export class SubLoansService {
   }
 
   /**
+   * Marca como OVERDUE todos los subloans cuya fecha de vencimiento ya pasó
+   * (solo PENDING o PARTIAL)
+   */
+  async markOverdueSubLoans() {
+    // Obtener inicio del día actual en GMT-3 usando DateUtil
+    const todayStart = new Date();
+    //add one day to the todayStart
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Buscar subloans cuya fecha de vencimiento es ANTERIOR al día de hoy
+    // y que aún están PENDING o PARTIAL
+    const updateResult = await this.prisma.subLoan.updateMany({
+      where: {
+        deletedAt: null,
+        status: {
+          in: ['PENDING'],
+        },
+        dueDate: {
+          lt: todayStart, // Menor que el inicio del día actual (solo compara fechas, no horas)
+        },
+      },
+      data: {
+        status: 'OVERDUE',
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      message: `Se marcaron ${updateResult.count} subloans como OVERDUE`,
+      count: updateResult.count,
+    };
+  }
+
+  /**
    * Obtiene estadísticas de subloans que vencen hoy
    */
   async getTodayDueSubLoansStats(userId: string) {
@@ -184,5 +219,111 @@ export class SubLoansService {
     });
 
     return stats;
+  }
+
+  /**
+   * Obtiene subloans con información del cliente para reportes
+   */
+  async getSubLoansWithClientInfo(
+    userId: string,
+    userRole: UserRole,
+    filters: {
+      status?: string;
+      dueDateFrom?: string;
+      dueDateTo?: string;
+    },
+  ) {
+    const where: any = {
+      deletedAt: null,
+    };
+
+    // Filtrar por rol
+    if (userRole === UserRole.MANAGER) {
+      where.loan = {
+        managerId: userId,
+        deletedAt: null,
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // Obtener managers del subadmin
+      const managers = await this.prisma.user.findMany({
+        where: {
+          createdById: userId,
+          role: UserRole.MANAGER,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+
+      where.loan = {
+        managerId: { in: managers.map((m) => m.id) },
+        deletedAt: null,
+      };
+    }
+
+    // Filtro de estado
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    // Filtros de fecha de vencimiento
+    if (filters.dueDateFrom || filters.dueDateTo) {
+      where.dueDate = {};
+      if (filters.dueDateFrom) {
+        const from = new Date(filters.dueDateFrom);
+        from.setHours(0, 0, 0, 0);
+        where.dueDate.gte = from;
+      }
+      if (filters.dueDateTo) {
+        const to = new Date(filters.dueDateTo);
+        to.setHours(23, 59, 59, 999);
+        where.dueDate.lte = to;
+      }
+    }
+
+    const subLoans = await this.prisma.subLoan.findMany({
+      where,
+      include: {
+        loan: {
+          select: {
+            id: true,
+            loanTrack: true,
+            amount: true,
+            currency: true,
+            paymentFrequency: true,
+            client: {
+              select: {
+                id: true,
+                fullName: true,
+                dni: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        dueDate: 'asc',
+      },
+    });
+
+    return subLoans.map((subLoan) => ({
+      id: subLoan.id,
+      loanId: subLoan.loanId,
+      amount: subLoan.amount,
+      totalAmount: subLoan.totalAmount,
+      paidAmount: subLoan.paidAmount,
+      status: subLoan.status,
+      dueDate: subLoan.dueDate,
+      paymentNumber: subLoan.paymentNumber,
+      createdAt: subLoan.createdAt,
+      loan: {
+        id: subLoan.loan.id,
+        loanTrack: subLoan.loan.loanTrack,
+        amount: subLoan.loan.amount,
+        currency: subLoan.loan.currency,
+        paymentFrequency: subLoan.loan.paymentFrequency,
+      },
+      client: subLoan.loan.client,
+    }));
   }
 }

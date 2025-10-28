@@ -154,4 +154,59 @@ export class SubLoansController {
     const result = await this.subLoansService.activateTodayDueSubLoans();
     return result;
   }
+
+  @Get('with-client-info')
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener subloans con información del cliente',
+    description: 'Retorna todas las cuotas (subloans) del manager con información del cliente asociado para reportes',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE'],
+    description: 'Filtrar por estado de subloan',
+  })
+  @ApiQuery({
+    name: 'dueDateFrom',
+    required: false,
+    type: String,
+    description: 'Vencimiento desde (ISO 8601)',
+    example: '2024-01-01',
+  })
+  @ApiQuery({
+    name: 'dueDateTo',
+    required: false,
+    type: String,
+    description: 'Vencimiento hasta (ISO 8601)',
+    example: '2024-12-31',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'SubLoans con información de cliente obtenidos exitosamente',
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getSubLoansWithClientInfo(
+    @Request() req,
+    @Query('status') status?: string,
+    @Query('dueDateFrom') dueDateFrom?: string,
+    @Query('dueDateTo') dueDateTo?: string,
+  ) {
+    const result = await this.subLoansService.getSubLoansWithClientInfo(
+      req.user.id,
+      req.user.role,
+      { status, dueDateFrom, dueDateTo },
+    );
+    
+    return result.map((subLoan) => ({
+      ...subLoan,
+      amount: Number(subLoan.amount),
+      totalAmount: Number(subLoan.totalAmount),
+      paidAmount: Number(subLoan.paidAmount),
+      loan: {
+        ...subLoan.loan,
+        amount: Number(subLoan.loan.amount),
+      },
+    }));
+  }
 }
