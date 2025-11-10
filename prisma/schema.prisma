@@ -8,26 +8,30 @@ datasource db {
 }
 
 model User {
-  id                 String                  @id @default(cuid())
-  email              String                  @unique
-  password           String
-  phone              String?
-  fullName           String
-  role               UserRole                @default(MANAGER)
-  createdAt          DateTime                @default(now())
-  updatedAt          DateTime                @updatedAt
-  deletedAt          DateTime?
-  createdById        String?
-  clientQuota        Int                     @default(0)
-  usedClientQuota    Int                     @default(0)
-  managedClients     ClientManager[]
-  refreshTokens      RefreshToken[]
-  wallet             Wallet?
-  dailyClosures      DailyClosure[]
-  walletTransactions WalletTransaction[]
-  collectionRoutes   DailyCollectionRoute[]  @relation("ManagerCollectionRoutes")
-  createdBy          User?                   @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers       User[]                  @relation("UserCreatedBy")
+  id                       String                       @id @default(cuid())
+  email                    String                       @unique
+  password                 String
+  phone                    String?
+  fullName                 String
+  role                     UserRole                     @default(MANAGER)
+  createdAt                DateTime                     @default(now())
+  updatedAt                DateTime                     @updatedAt
+  deletedAt                DateTime?
+  createdById              String?
+  clientQuota              Int                          @default(0)
+  usedClientQuota          Int                          @default(0)
+  commission               Decimal?                     @db.Decimal(5, 2) // Porcentaje de comisión asignado por el subadmin
+  managedClients           ClientManager[]
+  refreshTokens            RefreshToken[]
+  wallet                   Wallet?
+  dailyClosures            DailyClosure[]
+  walletTransactions       WalletTransaction[]
+  collectionRoutes         DailyCollectionRoute[]       @relation("ManagerCollectionRoutes")
+  payments                 ManagerPayment[]             @relation("ManagerPayments") // Pagos recibidos por el manager
+  collectorWallet          CollectorWallet?
+  collectorWalletTxs       CollectorWalletTransaction[]
+  createdBy                User?                        @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers             User[]                       @relation("UserCreatedBy")
 
   @@map("users")
 }
@@ -63,6 +67,22 @@ model ClientManager {
 
   @@unique([clientId, userId])
   @@map("client_managers")
+}
+
+model ManagerPayment {
+  id          String   @id @default(cuid())
+  managerId   String
+  amount      Decimal  @db.Decimal(40, 2)
+  currency    Currency @default(ARS)
+  description String?
+  paymentDate DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  manager     User     @relation("ManagerPayments", fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@map("manager_payments")
+  @@index([managerId])
+  @@index([paymentDate])
 }
 
 model Loan {
@@ -464,4 +484,46 @@ model RouteExpense {
 enum CollectionRouteStatus {
   ACTIVE
   CLOSED
+}
+
+model CollectorWallet {
+  id           String                       @id @default(cuid())
+  userId       String                       @unique
+  balance      Decimal                      @default(0) @db.Decimal(40, 2)
+  currency     Currency                     @default(ARS)
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+  user         User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions CollectorWalletTransaction[]
+
+  @@map("collector_wallets")
+}
+
+model CollectorWalletTransaction {
+  id          String                          @id @default(cuid())
+  walletId    String
+  userId      String
+  type        CollectorWalletTransactionType
+  amount      Decimal                         @db.Decimal(40, 2)
+  currency    Currency                        @default(ARS)
+  description String
+  balanceBefore Decimal                       @db.Decimal(40, 2) // Balance antes de la transacción
+  balanceAfter  Decimal                       @db.Decimal(40, 2) // Balance después de la transacción
+  subLoanId   String? // Referencia al subloan si es un cobro
+  createdAt   DateTime                        @default(now())
+  updatedAt   DateTime                        @updatedAt
+  wallet      CollectorWallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user        User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("collector_wallet_transactions")
+  @@index([walletId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([subLoanId])
+}
+
+enum CollectorWalletTransactionType {
+  COLLECTION     // Cobro de subloan
+  WITHDRAWAL     // Retiro de fondos
 }

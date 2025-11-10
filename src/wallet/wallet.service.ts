@@ -312,18 +312,8 @@ export class WalletService {
       ? Number(managerWallet.balance) + absoluteAmount
       : Number(managerWallet.balance) - absoluteAmount;
 
-    // Validar que ningún saldo quede negativo
-    if (newSubadminBalance < 0) {
-      throw new BadRequestException(
-        `Saldo insuficiente en cartera SUBADMIN. Disponible: ${Number(subadminWallet.balance)}, Requerido: ${absoluteAmount}`,
-      );
-    }
-
-    if (newManagerBalance < 0) {
-      throw new BadRequestException(
-        `Saldo insuficiente en cartera MANAGER. Disponible: ${Number(managerWallet.balance)}, Requerido: ${absoluteAmount}`,
-      );
-    }
+    // Se permite saldo negativo en el sistema
+    // Las validaciones de saldo se removieron para permitir operaciones con saldo negativo
 
     // Realizar transferencia en transacción
     const result = await this.prisma.$transaction(async (tx) => {
@@ -527,6 +517,7 @@ export class WalletService {
 
   /**
    * Debitar de cartera (uso interno para préstamos)
+   * PERMITE SALDO NEGATIVO - El sistema permite que los managers operen con saldo negativo
    */
   async debit(params: {
     userId: string;
@@ -546,12 +537,8 @@ export class WalletService {
       throw new NotFoundException('Cartera no encontrada');
     }
 
-    // Validar saldo
-    if (Number(wallet.balance) < amount) {
-      throw new BadRequestException(
-        `Saldo insuficiente. Disponible: ${Number(wallet.balance)}, Requerido: ${amount}`,
-      );
-    }
+    // NO SE VALIDA SALDO - Se permite saldo negativo en la wallet principal
+    // Los managers pueden operar con saldo negativo
 
     // Actualizar balance
     await tx.wallet.update({

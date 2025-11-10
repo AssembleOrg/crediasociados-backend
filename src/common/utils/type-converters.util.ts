@@ -27,5 +27,6 @@ export function convertPrismaUserToResponse(prismaUser: any): any {
     clientQuota,
     usedClientQuota,
     availableClientQuota: clientQuota - usedClientQuota,
+    commission: prismaUser.commission ? Number(prismaUser.commission) : null,
   };
 }

@@ -118,4 +118,38 @@ export class AuthService {
       where: { token },
     });
   }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    // 1. Buscar el usuario
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+
+    // 2. Verificar que la contraseña actual sea correcta
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      throw new BadRequestException('La contraseña actual es incorrecta');
+    }
+
+    // 3. Hash de la nueva contraseña
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // 4. Actualizar la contraseña
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    this.logger.log(`Usuario ${user.email} cambió su contraseña exitosamente`);
+
+    return { message: 'Contraseña actualizada exitosamente' };
+  }
 }

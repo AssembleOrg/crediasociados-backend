@@ -37,14 +37,10 @@ export class LoansService {
       );
     }
 
-    // 2. Verificar que el manager tenga saldo suficiente en su cartera
+    // 2. Obtener la cartera del manager (se permite saldo negativo)
     const wallet = await this.walletService.getUserWallet(userId);
 
-    if (Number(wallet.balance) < createLoanDto.amount) {
-      throw new BadRequestException(
-        `Saldo insuficiente en cartera. Disponible: ${Number(wallet.balance)}, Requerido: ${createLoanDto.amount}`,
-      );
-    }
+    // Se removió la validación de saldo suficiente - el sistema permite saldo negativo
 
     // 3. Validar que la moneda del préstamo coincida con la de la cartera
     if (wallet.currency !== createLoanDto.currency) {

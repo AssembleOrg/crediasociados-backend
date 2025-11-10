@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 import { RegisterPaymentDto, BulkPaymentDto } from './dto';
 import { Prisma, SubLoanStatus, UserRole } from '@prisma/client';
 import { DateUtil } from '../common/utils';
@@ -16,6 +17,7 @@ export class PaymentsService {
   constructor(
     private prisma: PrismaService,
     private walletService: WalletService,
+    private collectorWalletService: CollectorWalletService,
   ) {}
 
   /**
@@ -255,6 +257,18 @@ export class PaymentsService {
         description: `Pago préstamo ${subLoan.loan.loanTrack} - Cuota #${subLoan.paymentNumber}`,
         transaction: tx,
       });
+
+      // 5. Registrar el cobro en la wallet del cobrador (quien registra el pago)
+      // Solo si el usuario que registra es un MANAGER (cobrador)
+      if (userRole === UserRole.MANAGER) {
+        await this.collectorWalletService.recordCollection({
+          userId,
+          amount,
+          description: `Cobro préstamo ${subLoan.loan.loanTrack} - Cuota #${subLoan.paymentNumber}`,
+          subLoanId,
+          transaction: tx,
+        });
+      }
 
       return {
         payment,

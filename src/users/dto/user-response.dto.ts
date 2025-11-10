@@ -44,6 +44,13 @@ export class UserResponseDto {
   availableClientQuota: number;
 
   @ApiPropertyOptional({
+    nullable: true,
+    description: 'Porcentaje de comisión del manager (solo MANAGER)',
+    example: 10.5,
+  })
+  commission?: number | null;
+
+  @ApiPropertyOptional({
     type: WalletInfoDto,
     nullable: true,
     description: 'Información de la cartera del usuario (solo SUBADMIN y MANAGER)',
