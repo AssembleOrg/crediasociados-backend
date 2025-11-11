@@ -1,4 +1,4 @@
-import { IsOptional, IsDateString } from 'class-validator';
+import { IsOptional, IsDateString, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PeriodReportDto {
@@ -19,5 +19,15 @@ export class PeriodReportDto {
   @IsOptional()
   @IsDateString({}, { message: 'endDate debe ser una fecha válida (YYYY-MM-DD)' })
   endDate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'ID del manager del cual obtener el reporte. Solo disponible para ADMIN y SUBADMIN. ' +
+      'Si no se proporciona, usa el usuario autenticado (su propio reporte).',
+    example: 'cmht5jiq20008gxv2ndk6mj8i',
+  })
+  @IsOptional()
+  @IsString({ message: 'managerId debe ser un string válido' })
+  managerId?: string;
 }
 

@@ -1044,4 +1044,95 @@ export class LoansService {
       stats,
     };
   }
+
+  async getTodayLoans(userId: string, userRole: UserRole) {
+    // Obtener la fecha de hoy (inicio y fin del día)
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Construir whereClause basado en el rol del usuario
+    const whereClause: any = {
+      deletedAt: null,
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+    };
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus clientes
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: userId,
+            deletedAt: null,
+          },
+        },
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: clientes de sus managers
+      const managedUserIds = await this.getManagedUserIds(userId);
+      whereClause.client = {
+        managers: {
+          some: {
+            userId: { in: managedUserIds },
+            deletedAt: null,
+          },
+        },
+      };
+    }
+    // ADMIN y SUPERADMIN ven todos los préstamos
+
+    const loans = await this.prisma.loan.findMany({
+      where: whereClause,
+      include: {
+        client: {
+          select: {
+            fullName: true,
+          },
+        },
+        subLoans: {
+          where: { deletedAt: null },
+          select: {
+            totalAmount: true,
+          },
+        },
+      },
+    });
+
+    // Transformar los datos para devolver el formato requerido
+    const transformedLoans = loans.map((loan) => {
+      const montoTotalADevolver = loan.subLoans.reduce(
+        (sum, subLoan) => sum + Number(subLoan.totalAmount),
+        0,
+      );
+
+      return {
+        montoTotalPrestado: Number(loan.amount),
+        montoTotalADevolver,
+        nombrecliente: loan.client.fullName,
+      };
+    });
+
+    // Calcular totales
+    const total = transformedLoans.length;
+    const totalAmount = transformedLoans.reduce(
+      (sum, loan) => sum + loan.montoTotalPrestado,
+      0,
+    );
+
+    // Formatear fecha para la respuesta
+    const date = today.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    return {
+      date,
+      total,
+      totalAmount,
+      loans: transformedLoans,
+    };
+  }
 }

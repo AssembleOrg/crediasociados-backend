@@ -24,6 +24,8 @@ import {
   LoanTrackingResponseDto,
   CreateLoanResponseDto,
   LoanListResponseDto,
+  TodayLoansDto,
+  TodayLoanItemDto,
 } from './dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -406,6 +408,29 @@ export class LoansController {
     @Request() req,
   ): Promise<LoanChartDataDto[]> {
     return this.loansService.getLoansChart(req.user.id, req.user.role, filters);
+  }
+
+  @Get('today')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    UserRole.MANAGER,
+    UserRole.SUBADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPERADMIN,
+  )
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener préstamos creados hoy',
+    description: 'Devuelve la lista de préstamos creados en la fecha actual con monto prestado, monto total a devolver y nombre del cliente',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Préstamos de hoy obtenidos exitosamente',
+    type: TodayLoansDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getTodayLoans(@Request() req): Promise<TodayLoansDto> {
+    return this.loansService.getTodayLoans(req.user.id, req.user.role);
   }
 
   @Get(':id')

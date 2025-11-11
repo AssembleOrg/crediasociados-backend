@@ -121,7 +121,8 @@ export class CollectorWalletController {
     description:
       'Retorna un reporte completo del período incluyendo: historial de wallet de cobros, ' +
       'cobros realizados con porcentajes, retiros, gastos y comisión calculada automáticamente. ' +
-      'Si no se proporcionan fechas, usa la semana actual (lunes a domingo).',
+      'Si no se proporcionan fechas, usa la semana actual (lunes a domingo). ' +
+      'ADMIN y SUBADMIN pueden especificar managerId para ver reportes de otros managers.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -134,10 +135,42 @@ export class CollectorWalletController {
     const startDate = query.startDate ? new Date(query.startDate) : undefined;
     const endDate = query.endDate ? new Date(query.endDate) : undefined;
 
+    // Determinar el usuario objetivo
+    let targetUserId = currentUser.id;
+    let managerIdToPass: string | undefined;
+
+    if (query.managerId) {
+      // Validar permisos para ver otros managers
+      if (currentUser.role === UserRole.MANAGER) {
+        throw new ForbiddenException('No tienes permisos para ver reportes de otros managers');
+      }
+
+      // Para SUBADMIN y ADMIN/SUPERADMIN, validar que el manager exista
+      const targetUser = await this.collectorWalletService['prisma'].user.findUnique({
+        where: { id: query.managerId },
+        select: { createdById: true, role: true },
+      });
+
+      if (!targetUser) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      // Para SUBADMIN, adicionalmente validar que el manager sea suyo
+      if (currentUser.role === UserRole.SUBADMIN && targetUser.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver el reporte de managers que tú creaste',
+        );
+      }
+
+      targetUserId = query.managerId;
+      managerIdToPass = query.managerId;
+    }
+
     return this.collectorWalletService.getPeriodReport(
       currentUser.id,
       startDate,
       endDate,
+      managerIdToPass,
     );
   }
 

@@ -302,7 +302,11 @@ export class CollectorWalletService {
     userId: string,
     startDate?: Date,
     endDate?: Date,
+    managerId?: string,
   ): Promise<any> {
+    // Determinar el usuario objetivo (managerId si se proporciona, de lo contrario userId)
+    const targetUserId = managerId || userId;
+
     // Si no se proporcionan fechas, calcular la semana actual
     let periodStart: Date;
     let periodEnd: Date;
@@ -329,12 +333,12 @@ export class CollectorWalletService {
       periodEnd.setHours(23, 59, 59, 999);
     }
 
-    // Obtener wallet del usuario
-    const wallet = await this.getOrCreateWallet(userId);
+    // Obtener wallet del usuario objetivo
+    const wallet = await this.getOrCreateWallet(targetUserId);
 
-    // Obtener usuario con su % de comisión
+    // Obtener usuario objetivo con su % de comisión
     const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: targetUserId },
       select: { commission: true, fullName: true, email: true, role: true },
     });
 
@@ -374,7 +378,7 @@ export class CollectorWalletService {
             client: {
               managers: {
                 some: {
-                  userId: userId,
+                  userId: targetUserId,
                   deletedAt: null,
                 },
               },
@@ -407,7 +411,7 @@ export class CollectorWalletService {
           client: {
             managers: {
               some: {
-                userId: userId,
+                userId: targetUserId,
                 deletedAt: null,
               },
             },
@@ -455,7 +459,7 @@ export class CollectorWalletService {
     // 6a. Gastos de daily closures (sistema antiguo)
     const dailyClosures = await this.prisma.dailyClosure.findMany({
       where: {
-        userId: userId,
+        userId: targetUserId,
         closureDate: {
           gte: periodStart,
           lte: periodEnd,
@@ -469,7 +473,7 @@ export class CollectorWalletService {
     // 6b. Gastos de collection routes (sistema nuevo)
     const collectionRoutes = await this.prisma.dailyCollectionRoute.findMany({
       where: {
-        managerId: userId,
+        managerId: targetUserId,
         routeDate: {
           gte: periodStart,
           lte: periodEnd,
