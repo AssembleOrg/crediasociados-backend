@@ -21,12 +21,14 @@ import {
   GetTransactionsDto,
   PeriodReportDto,
   DailySummaryDto,
+  TodayCollectionsDto,
 } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DateUtil } from '../common/utils/date.util';
 
 @ApiTags('Collector Wallet')
 @ApiBearerAuth()
@@ -132,8 +134,8 @@ export class CollectorWalletController {
     @CurrentUser() currentUser: any,
     @Query() query: PeriodReportDto,
   ) {
-    const startDate = query.startDate ? new Date(query.startDate) : undefined;
-    const endDate = query.endDate ? new Date(query.endDate) : undefined;
+    const startDate = query.startDate ? DateUtil.parseToDate(query.startDate) : undefined;
+    const endDate = query.endDate ? DateUtil.parseToDate(query.endDate) : undefined;
 
     // Determinar el usuario objetivo
     let targetUserId = currentUser.id;
@@ -234,6 +236,25 @@ export class CollectorWalletController {
 
     const date = query.date ? new Date(query.date) : undefined;
     return this.collectorWalletService.getDailySummary(targetUserId, date);
+  }
+
+  @Get('today/collections')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener cobros realizados hoy',
+    description: 'Devuelve la lista de cobros realizados en la fecha actual con monto, información del usuario que cobró y descripción',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Cobros de hoy obtenidos exitosamente',
+    type: TodayCollectionsDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getTodayCollections(@CurrentUser() currentUser: any): Promise<TodayCollectionsDto> {
+    return this.collectorWalletService.getTodayCollections(
+      currentUser.id,
+      currentUser.role,
+    );
   }
 }
 

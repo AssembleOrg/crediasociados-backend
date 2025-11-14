@@ -31,6 +31,7 @@ import {
   CreateRouteExpenseDto,
   UpdateRouteExpenseDto,
   RouteExpenseResponseDto,
+  TodayExpensesDto,
 } from './dto';
 
 @ApiTags('Collection Routes')
@@ -414,6 +415,30 @@ export class CollectionRoutesController {
   ): Promise<{ message: string }> {
     return this.collectionRoutesService.deleteRouteExpense(
       expenseId,
+      req.user.id,
+      req.user.role,
+    );
+  }
+
+  @Get('today/expenses')
+  @Roles(
+    UserRole.MANAGER,
+    UserRole.SUBADMIN,
+    UserRole.ADMIN,
+    UserRole.SUPERADMIN,
+  )
+  @ApiOperation({
+    summary: 'Obtener gastos realizados hoy',
+    description: 'Devuelve la lista de gastos creados en la fecha actual con monto, categoría, descripción e información del manager',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Gastos de hoy obtenidos exitosamente',
+    type: TodayExpensesDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getTodayExpenses(@Request() req): Promise<TodayExpensesDto> {
+    return this.collectionRoutesService.getTodayExpenses(
       req.user.id,
       req.user.role,
     );

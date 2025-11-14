@@ -4,4 +4,5 @@ export * from './update-route-order.dto';
 export * from './close-route.dto';
 export * from './get-routes-query.dto';
 export * from './route-expense.dto';
+export * from './today-expenses.dto';
 

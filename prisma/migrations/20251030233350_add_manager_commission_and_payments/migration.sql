@@ -28,3 +28,4 @@ ALTER TABLE "public"."manager_payments" ADD CONSTRAINT "manager_payments_manager
 
 
 
+

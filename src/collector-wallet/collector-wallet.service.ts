@@ -5,8 +5,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { CollectorWalletTransactionType } from '../common/enums';
+import { DateUtil } from '../common/utils/date.util';
 
 @Injectable()
 export class CollectorWalletService {
@@ -326,11 +327,12 @@ export class CollectorWalletService {
       periodEnd.setDate(periodStart.getDate() + 6);
       periodEnd.setHours(23, 59, 59, 999);
     } else {
-      periodStart = new Date(startDate);
-      periodStart.setHours(0, 0, 0, 0);
+      // Usar DateUtil para manejar correctamente la zona horaria de Buenos Aires
+      const startDt = DateUtil.fromJSDate(startDate).startOf('day');
+      periodStart = DateUtil.toJSDate(startDt);
       
-      periodEnd = new Date(endDate);
-      periodEnd.setHours(23, 59, 59, 999);
+      const endDt = DateUtil.fromJSDate(endDate).endOf('day');
+      periodEnd = DateUtil.toJSDate(endDt);
     }
 
     // Obtener wallet del usuario objetivo
@@ -821,6 +823,81 @@ export class CollectorWalletService {
         totalExpenses,
         netBalance,
       },
+    };
+  }
+
+  async getTodayCollections(userId: string, userRole: UserRole) {
+    // Obtener la fecha de hoy (inicio y fin del día)
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Construir whereClause basado en el rol del usuario
+    const whereClause: any = {
+      type: CollectorWalletTransactionType.COLLECTION,
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+    };
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus cobros
+      whereClause.userId = userId;
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: cobros de sus managers
+      const managedUsers = await this.prisma.user.findMany({
+        where: {
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const managedUserIds = managedUsers.map((u) => u.id);
+      whereClause.userId = { in: managedUserIds };
+    }
+    // ADMIN y SUPERADMIN ven todos los cobros
+
+    const collections = await this.prisma.collectorWalletTransaction.findMany({
+      where: whereClause,
+      include: {
+        user: {
+          select: {
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Transformar los datos para devolver el formato requerido
+    const transformedCollections = collections.map((collection) => ({
+      monto: Number(collection.amount),
+      nombreUsuario: collection.user.fullName,
+      emailUsuario: collection.user.email,
+      descripcion: collection.description,
+      fechaCobro: collection.createdAt,
+    }));
+
+    // Calcular totales
+    const total = transformedCollections.length;
+    const totalAmount = transformedCollections.reduce(
+      (sum, collection) => sum + collection.monto,
+      0,
+    );
+
+    // Formatear fecha para la respuesta
+    const date = today.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    return {
+      date,
+      total,
+      totalAmount,
+      collections: transformedCollections,
     };
   }
 }

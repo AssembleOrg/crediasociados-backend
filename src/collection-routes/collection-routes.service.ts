@@ -913,5 +913,88 @@ export class CollectionRoutesService {
       })),
     };
   }
+
+  async getTodayExpenses(userId: string, userRole: UserRole) {
+    // Obtener la fecha de hoy (inicio y fin del día)
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Construir whereClause basado en el rol del usuario
+    const whereClause: any = {
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+    };
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus gastos
+      whereClause.route = {
+        managerId: userId,
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: gastos de sus managers
+      const managedUsers = await this.prisma.user.findMany({
+        where: {
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const managedUserIds = managedUsers.map((u) => u.id);
+      whereClause.route = {
+        managerId: { in: managedUserIds },
+      };
+    }
+    // ADMIN y SUPERADMIN ven todos los gastos
+
+    const expenses = await this.prisma.routeExpense.findMany({
+      where: whereClause,
+      include: {
+        route: {
+          include: {
+            manager: {
+              select: {
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Transformar los datos para devolver el formato requerido
+    const transformedExpenses = expenses.map((expense) => ({
+      monto: Number(expense.amount),
+      categoria: expense.category,
+      descripcion: expense.description,
+      nombreManager: expense.route.manager.fullName,
+      emailManager: expense.route.manager.email,
+      fechaGasto: expense.createdAt,
+    }));
+
+    // Calcular totales
+    const total = transformedExpenses.length;
+    const totalAmount = transformedExpenses.reduce(
+      (sum, expense) => sum + expense.monto,
+      0,
+    );
+
+    // Formatear fecha para la respuesta
+    const date = today.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    return {
+      date,
+      total,
+      totalAmount,
+      expenses: transformedExpenses,
+    };
+  }
 }
 
