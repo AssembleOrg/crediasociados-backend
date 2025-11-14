@@ -900,5 +900,58 @@ export class CollectorWalletService {
       collections: transformedCollections,
     };
   }
+
+  async getAllWalletHistory(userId: string, userRole: UserRole): Promise<any> {
+    // Construir whereClause basado en el rol del usuario
+    const whereClause: any = {};
+
+    // Filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus transacciones
+      const wallet = await this.getOrCreateWallet(userId);
+      whereClause.walletId = wallet.id;
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: transacciones de sus managers
+      const managedUsers = await this.prisma.user.findMany({
+        where: {
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const managedUserIds = managedUsers.map((u) => u.id);
+      
+      // Obtener wallets de los managers
+      const wallets = await this.prisma.collectorWallet.findMany({
+        where: {
+          userId: { in: managedUserIds },
+        },
+        select: { id: true },
+      });
+      const walletIds = wallets.map((w) => w.id);
+      whereClause.walletId = { in: walletIds };
+    }
+    // ADMIN y SUPERADMIN ven todas las transacciones
+
+    const transactions = await this.prisma.collectorWalletTransaction.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      total: transactions.length,
+      transactions: transactions.map((t) => ({
+        id: t.id,
+        type: t.type,
+        amount: Number(t.amount),
+        currency: t.currency,
+        description: t.description,
+        balanceBefore: Number(t.balanceBefore),
+        balanceAfter: Number(t.balanceAfter),
+        subLoanId: t.subLoanId,
+        createdAt: t.createdAt,
+      })),
+    };
+  }
 }
 

@@ -8,6 +8,9 @@ import {
   Delete,
   UseGuards,
   Query,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,6 +25,7 @@ import {
   CreateClientDto,
   UpdateClientDto,
   InactiveClientsResponseDto,
+  InactiveClientsDto,
 } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
@@ -167,6 +171,56 @@ export class ClientsController {
   ) {
     const result = await this.clientsService.searchByDniOrCuit(dni, cuit);
     return result;
+  }
+
+  @Get('inactive')
+  @Roles(UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Obtener clientes sin préstamos activos de un manager (SUBADMIN)',
+    description:
+      'Devuelve la lista de clientes de un manager que no tienen préstamos activos. ' +
+      'Incluye solo: nombre, teléfono, dirección y fecha de último préstamo. ' +
+      'Ordenados por fecha de último préstamo DESC (los que nunca tuvieron préstamo aparecen primero).',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: true,
+    description: 'ID del manager del cual obtener los clientes',
+    example: 'cmht5jiq20008gxv2ndk6mj8i',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Clientes inactivos obtenidos exitosamente',
+    type: InactiveClientsDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Solo SUBADMIN puede acceder a este endpoint' })
+  @ApiResponse({ status: 400, description: 'managerId es requerido' })
+  async getInactiveClients(
+    @CurrentUser() currentUser: any,
+    @Query('managerId') managerId: string,
+  ): Promise<InactiveClientsDto> {
+    if (!managerId) {
+      throw new BadRequestException('managerId es requerido');
+    }
+
+    // Validar que el manager pertenece al SUBADMIN
+    const manager = await this.clientsService['prisma'].user.findUnique({
+      where: { id: managerId },
+      select: { createdById: true, role: true },
+    });
+
+    if (!manager) {
+      throw new NotFoundException('Manager no encontrado');
+    }
+
+    if (manager.createdById !== currentUser.id) {
+      throw new ForbiddenException(
+        'Solo puedes ver clientes de managers que tú creaste',
+      );
+    }
+
+    return this.clientsService.getInactiveClients(managerId);
   }
 
   @Get(':id')

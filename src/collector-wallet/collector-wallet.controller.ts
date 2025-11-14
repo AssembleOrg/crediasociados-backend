@@ -22,6 +22,7 @@ import {
   PeriodReportDto,
   DailySummaryDto,
   TodayCollectionsDto,
+  WalletHistoryDto,
 } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -252,6 +253,25 @@ export class CollectorWalletController {
   @ApiResponse({ status: 401, description: 'No autorizado' })
   async getTodayCollections(@CurrentUser() currentUser: any): Promise<TodayCollectionsDto> {
     return this.collectorWalletService.getTodayCollections(
+      currentUser.id,
+      currentUser.role,
+    );
+  }
+
+  @Get('history')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener historial completo de movimientos de wallet de cobros',
+    description: 'Devuelve todos los movimientos (cobros y retiros) de la wallet de cobros sin paginación. MANAGER ve solo sus movimientos, SUBADMIN ve movimientos de sus managers, ADMIN/SUPERADMIN ven todos.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Historial obtenido exitosamente',
+    type: WalletHistoryDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  async getWalletHistory(@CurrentUser() currentUser: any): Promise<WalletHistoryDto> {
+    return this.collectorWalletService.getAllWalletHistory(
       currentUser.id,
       currentUser.role,
     );

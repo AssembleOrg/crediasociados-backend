@@ -686,4 +686,72 @@ export class ClientsService {
       stats,
     };
   }
+
+  async getInactiveClients(managerId: string): Promise<any> {
+    // Obtener todos los clientes del manager
+    const clients = await this.prisma.client.findMany({
+      where: {
+        deletedAt: null,
+        managers: {
+          some: {
+            userId: managerId,
+            deletedAt: null,
+          },
+        },
+      },
+      include: {
+        loans: {
+          where: {
+            deletedAt: null,
+            status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    // Filtrar clientes sin préstamos activos
+    const inactiveClients = clients.filter((client) => client.loans.length === 0);
+
+    // Obtener fecha de último préstamo para cada cliente (incluyendo préstamos completados)
+    const clientsWithLastLoan = await Promise.all(
+      inactiveClients.map(async (client) => {
+        const lastLoan = await this.prisma.loan.findFirst({
+          where: {
+            clientId: client.id,
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            createdAt: true,
+          },
+        });
+
+        return {
+          id: client.id,
+          nombre: client.fullName,
+          telefono: client.phone,
+          direccion: client.address,
+          fechaUltimoPrestamo: lastLoan?.createdAt || null,
+        };
+      }),
+    );
+
+    // Ordenar: primero los que nunca tuvieron préstamo (null), luego por fecha DESC
+    clientsWithLastLoan.sort((a, b) => {
+      if (!a.fechaUltimoPrestamo && !b.fechaUltimoPrestamo) return 0;
+      if (!a.fechaUltimoPrestamo) return -1; // Los sin préstamo primero
+      if (!b.fechaUltimoPrestamo) return 1;
+      return b.fechaUltimoPrestamo.getTime() - a.fechaUltimoPrestamo.getTime(); // Más reciente primero
+    });
+
+    return {
+      total: clientsWithLastLoan.length,
+      clients: clientsWithLastLoan,
+    };
+  }
 }
