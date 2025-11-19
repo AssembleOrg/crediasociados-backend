@@ -44,6 +44,7 @@ model Client {
   phone        String?
   email        String?
   address      String?
+  verified     Boolean         @default(false)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   deletedAt    DateTime?
@@ -292,6 +293,8 @@ model WalletTransaction {
   currency      Currency              @default(ARS)
   description   String
   relatedUserId String?
+  balanceBefore Decimal?              @db.Decimal(40, 2) // Balance antes de la transacción
+  balanceAfter  Decimal?              @db.Decimal(40, 2) // Balance después de la transacción
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   wallet        Wallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
@@ -524,6 +527,9 @@ model CollectorWalletTransaction {
 }
 
 enum CollectorWalletTransactionType {
-  COLLECTION     // Cobro de subloan
-  WITHDRAWAL     // Retiro de fondos
+  COLLECTION       // Cobro de subloan
+  WITHDRAWAL       // Retiro de fondos
+  ROUTE_EXPENSE    // Gasto de hoja de ruta
+  LOAN_DISBURSEMENT // Desembolso de préstamo (puede ser negativo)
+  CASH_ADJUSTMENT  // Ajuste de caja desde wallet del subadmin (para cuadreo de caja negativo)
 }

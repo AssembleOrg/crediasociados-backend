@@ -11,16 +11,14 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
-import { DepositDto, WithdrawalDto, TransferDto } from './dto';
+import { DepositDto, WithdrawalDto, TransferDto, GetTransactionsDto } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UserRole, WalletTransactionType } from '../common/enums';
-import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('wallets')
 @ApiBearerAuth()
@@ -102,36 +100,9 @@ export class WalletController {
 
   @Get('transactions')
   @Roles(UserRole.SUBADMIN, UserRole.MANAGER)
-  @ApiOperation({ summary: 'Obtener historial de transacciones de la cartera' })
-  @ApiQuery({
-    name: 'page',
-    required: false,
-    type: Number,
-    description: 'Número de página',
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    type: Number,
-    description: 'Límite de resultados por página',
-  })
-  @ApiQuery({
-    name: 'type',
-    required: false,
-    enum: WalletTransactionType,
-    description: 'Filtrar por tipo de transacción',
-  })
-  @ApiQuery({
-    name: 'startDate',
-    required: false,
-    type: String,
-    description: 'Fecha desde (YYYY-MM-DD)',
-  })
-  @ApiQuery({
-    name: 'endDate',
-    required: false,
-    type: String,
-    description: 'Fecha hasta (YYYY-MM-DD)',
+  @ApiOperation({ 
+    summary: 'Obtener historial de transacciones de la cartera',
+    description: 'Obtiene el historial paginado de transacciones. Las fechas se interpretan en zona horaria de Buenos Aires (GMT-3). startDate usa el inicio del día (00:00:00) y endDate usa el final del día (23:59:59).',
   })
   @ApiResponse({
     status: 200,
@@ -139,15 +110,15 @@ export class WalletController {
   })
   async getTransactions(
     @CurrentUser() currentUser: any,
-    @Query() paginationDto: PaginationDto,
-    @Query('type') type?: WalletTransactionType,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query() query: GetTransactionsDto,
   ) {
-    return this.walletService.getTransactions(currentUser.id, paginationDto, {
-      type,
-      startDate,
-      endDate,
+    return this.walletService.getTransactions(currentUser.id, {
+      page: query.page,
+      limit: query.limit,
+    }, {
+      type: query.type,
+      startDate: query.startDate,
+      endDate: query.endDate,
     });
   }
 

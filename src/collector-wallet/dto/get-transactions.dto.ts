@@ -35,7 +35,7 @@ export class GetTransactionsDto {
   })
   @IsOptional()
   @IsEnum(CollectorWalletTransactionType, {
-    message: 'El tipo debe ser COLLECTION o WITHDRAWAL',
+    message: 'El tipo debe ser COLLECTION, WITHDRAWAL, ROUTE_EXPENSE, LOAN_DISBURSEMENT o CASH_ADJUSTMENT',
   })
   type?: CollectorWalletTransactionType;
 }

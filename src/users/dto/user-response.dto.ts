@@ -57,6 +57,13 @@ export class UserResponseDto {
   })
   wallet?: WalletInfoDto | null;
 
+  @ApiPropertyOptional({
+    type: WalletInfoDto,
+    nullable: true,
+    description: 'Información de la wallet de cobros del manager',
+  })
+  collectorWallet?: WalletInfoDto | null;
+
   @ApiProperty()
   createdAt: Date;
 

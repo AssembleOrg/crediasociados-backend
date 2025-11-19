@@ -258,17 +258,15 @@ export class PaymentsService {
         transaction: tx,
       });
 
-      // 5. Registrar el cobro en la wallet del cobrador (quien registra el pago)
-      // Solo si el usuario que registra es un MANAGER (cobrador)
-      if (userRole === UserRole.MANAGER) {
-        await this.collectorWalletService.recordCollection({
-          userId,
-          amount,
-          description: `Cobro préstamo ${subLoan.loan.loanTrack} - Cuota #${subLoan.paymentNumber}`,
-          subLoanId,
-          transaction: tx,
-        });
-      }
+      // 5. Registrar el cobro en la wallet del cobrador del manager asignado al cliente
+      // Siempre actualizar la wallet del manager, independientemente de quién registre el pago
+      await this.collectorWalletService.recordCollection({
+        userId: managerId, // Usar el manager del cliente, no quien registra el pago
+        amount,
+        description: `Cobro préstamo ${subLoan.loan.loanTrack} - Cuota #${subLoan.paymentNumber}`,
+        subLoanId,
+        transaction: tx,
+      });
 
       return {
         payment,

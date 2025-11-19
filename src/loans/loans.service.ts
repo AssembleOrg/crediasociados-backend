@@ -12,6 +12,7 @@ import { SubLoanGeneratorService } from './sub-loan-generator.service';
 import { Prisma, UserRole } from '@prisma/client';
 import { LoanStatus, WalletTransactionType } from 'src/common/enums';
 import { WalletService } from '../wallet/wallet.service';
+import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 
 @Injectable()
 export class LoansService {
@@ -19,6 +20,7 @@ export class LoansService {
     private prisma: PrismaService,
     private subLoanGenerator: SubLoanGeneratorService,
     private walletService: WalletService,
+    private collectorWalletService: CollectorWalletService,
   ) {}
 
   async createLoan(createLoanDto: CreateLoanDto, userId: string) {
@@ -29,6 +31,15 @@ export class LoansService {
         userId: userId,
         deletedAt: null,
       },
+      include: {
+        client: {
+          select: {
+            id: true,
+            verified: true,
+            fullName: true,
+          },
+        },
+      },
     });
 
     if (!clientManager) {
@@ -37,19 +48,26 @@ export class LoansService {
       );
     }
 
-    // 2. Obtener la cartera del manager (se permite saldo negativo)
+    // 2. Verificar que el cliente esté verificado
+    if (!clientManager.client.verified) {
+      throw new BadRequestException(
+        `No se puede crear un préstamo para el cliente "${clientManager.client.fullName}" porque no está verificado`,
+      );
+    }
+
+    // 3. Obtener la cartera del manager (se permite saldo negativo)
     const wallet = await this.walletService.getUserWallet(userId);
 
     // Se removió la validación de saldo suficiente - el sistema permite saldo negativo
 
-    // 3. Validar que la moneda del préstamo coincida con la de la cartera
+    // 4. Validar que la moneda del préstamo coincida con la de la cartera
     if (wallet.currency !== createLoanDto.currency) {
       throw new BadRequestException(
         `La cartera usa ${wallet.currency}, no se puede prestar en ${createLoanDto.currency}`,
       );
     }
 
-    // Generar o usar el código de tracking
+    // 5. Generar o usar el código de tracking
     let loanTrack: string;
     let prefix: string;
     let year: number;
@@ -94,7 +112,7 @@ export class LoansService {
       }
     }
 
-    // 4. Usar transacción para crear el loan, subloans y debitar de cartera
+    // 6. Usar transacción para crear el loan, subloans y debitar de cartera
     const result = await this.prisma.$transaction(async (prisma) => {
       // Crear el préstamo
       const loan = await prisma.loan.create({
@@ -135,12 +153,12 @@ export class LoansService {
         prisma,
       );
 
-      // NUEVO: Debitar de la cartera del manager
-      await this.walletService.debit({
+      // Debitar de la collector wallet del manager (permite saldo negativo)
+      await this.collectorWalletService.recordLoanDisbursement({
         userId,
-        amount: createLoanDto.amount,
-        type: WalletTransactionType.LOAN_DISBURSEMENT,
+        amount: Number(createLoanDto.amount),
         description: `Préstamo ${loanTrack} - ${createLoanDto.description || 'Desembolso'}`,
+        loanId: loan.id,
         transaction: prisma,
       });
 

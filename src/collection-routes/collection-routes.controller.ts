@@ -307,6 +307,85 @@ export class CollectionRoutesController {
     return this.collectionRoutesService.createDailyRoutes();
   }
 
+  @Post('create-daily-november')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Crear rutas de cobro para noviembre (del 15 al 30 de noviembre de 2025)',
+    description:
+      'Crea manualmente las rutas de cobro para todos los managers con subloans activos ' +
+      'desde el 15 de noviembre hasta el 30 de noviembre de 2025. ' +
+      'Útil para testing y simulación de rutas históricas. ' +
+      'Solo para ADMIN/SUPERADMIN.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Rutas creadas exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          example: 'Se crearon 25 rutas de cobro para el período del 15 de noviembre hasta hoy',
+        },
+        totalRoutesCreated: {
+          type: 'number',
+          example: 25,
+        },
+        period: {
+          type: 'object',
+          properties: {
+            start: { type: 'string', example: '15/11/2024' },
+            end: { type: 'string', example: '20/11/2024' },
+          },
+        },
+        dailySummaries: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', example: '15/11/2024' },
+              routesCreated: { type: 'number', example: 2 },
+              routes: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    managerId: { type: 'string' },
+                    managerName: { type: 'string' },
+                    routeId: { type: 'string' },
+                    itemsCount: { type: 'number' },
+                    date: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+        allCreatedRoutes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              managerId: { type: 'string' },
+              managerName: { type: 'string' },
+              routeId: { type: 'string' },
+              itemsCount: { type: 'number' },
+              date: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({
+    status: 403,
+    description: 'Prohibido - Solo para ADMIN/SUPERADMIN',
+  })
+  async createDailyRoutesForNovember(@Request() req): Promise<any> {
+    return this.collectionRoutesService.createDailyRoutesForNovember();
+  }
+
   @Post(':routeId/expenses')
   @Roles(UserRole.MANAGER, UserRole.SUBADMIN)
   @ApiOperation({

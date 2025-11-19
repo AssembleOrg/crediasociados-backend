@@ -18,12 +18,16 @@ import {
 } from './dto';
 import { Decimal } from '@prisma/client/runtime/library';
 import { DateUtil } from '../common/utils/date.util';
+import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 
 @Injectable()
 export class CollectionRoutesService {
   private readonly logger = new Logger(CollectionRoutesService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private collectorWalletService: CollectorWalletService,
+  ) {}
 
   /**
    * Crear rutas de cobro para todos los managers con subloans activos para hoy
@@ -189,6 +193,202 @@ export class CollectionRoutesService {
       message: `Se crearon ${createdRoutes.length} rutas de cobro`,
       createdRoutes,
       date: todayStart,
+    };
+  }
+
+  /**
+   * Crear rutas de cobro para un período de fechas (desde el 15 de noviembre hasta el 30 de noviembre de 2025)
+   * Útil para testing y simulación de rutas históricas
+   */
+  async createDailyRoutesForNovember(): Promise<any> {
+    const startDate = DateUtil.fromObject({ year: 2025, month: 11, day: 15 }).startOf('day');
+    const endDate = DateUtil.fromObject({ year: 2025, month: 11, day: 30 }).startOf('day');
+
+    const allCreatedRoutes: any[] = [];
+    const dailySummaries: any[] = [];
+
+    // Iterar día por día desde el 15 de noviembre hasta hoy
+    let currentDate = startDate;
+    while (currentDate <= endDate) {
+      const dayStart = currentDate.startOf('day').toJSDate();
+      const dayEnd = currentDate.endOf('day').toJSDate();
+
+      this.logger.log(`Procesando rutas para fecha: ${DateUtil.format(currentDate, 'dd/MM/yyyy')}`);
+
+      // Obtener todos los managers con subloans que vencen en este día
+      const managersWithSubLoans = await this.prisma.user.findMany({
+        where: {
+          role: UserRole.MANAGER,
+          deletedAt: null,
+          managedClients: {
+            some: {
+              deletedAt: null,
+              client: {
+                deletedAt: null,
+                loans: {
+                  some: {
+                    deletedAt: null,
+                    status: { in: ['ACTIVE', 'APPROVED'] },
+                    subLoans: {
+                      some: {
+                        deletedAt: null,
+                        dueDate: {
+                          gte: dayStart,
+                          lte: dayEnd,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          fullName: true,
+        },
+      });
+
+      const dayRoutes: any[] = [];
+
+      for (const manager of managersWithSubLoans) {
+        try {
+          // Verificar si ya existe una ruta para este manager en esta fecha
+          const existingRoute = await this.prisma.dailyCollectionRoute.findFirst({
+            where: {
+              managerId: manager.id,
+              routeDate: dayStart,
+            },
+          });
+
+          if (existingRoute) {
+            this.logger.log(
+              `Ruta ya existe para manager ${manager.fullName} en fecha ${DateUtil.format(currentDate, 'dd/MM/yyyy')}`,
+            );
+            continue;
+          }
+
+          // Obtener subloans que vencen en este día para este manager
+          const subLoans = await this.prisma.subLoan.findMany({
+            where: {
+              deletedAt: null,
+              dueDate: {
+                gte: dayStart,
+                lte: dayEnd,
+              },
+              loan: {
+                deletedAt: null,
+                status: { in: ['ACTIVE', 'APPROVED'] },
+                client: {
+                  deletedAt: null,
+                  managers: {
+                    some: {
+                      userId: manager.id,
+                      deletedAt: null,
+                    },
+                  },
+                },
+              },
+            },
+            include: {
+              loan: {
+                include: {
+                  client: {
+                    select: {
+                      id: true,
+                      fullName: true,
+                      phone: true,
+                      address: true,
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: {
+              dueDate: 'asc',
+            },
+          });
+
+          if (subLoans.length === 0) {
+            this.logger.log(
+              `No hay subloans para manager ${manager.fullName} en fecha ${DateUtil.format(currentDate, 'dd/MM/yyyy')}`,
+            );
+            continue;
+          }
+
+          // Crear la ruta con sus items
+          const route = await this.prisma.$transaction(async (tx) => {
+            const newRoute = await tx.dailyCollectionRoute.create({
+              data: {
+                managerId: manager.id,
+                routeDate: dayStart,
+                status: 'ACTIVE',
+                totalCollected: new Decimal(0),
+                totalExpenses: new Decimal(0),
+                netAmount: new Decimal(0),
+              },
+            });
+
+            // Crear items de la ruta
+            const itemsData = subLoans.map((subLoan, index) => ({
+              routeId: newRoute.id,
+              subLoanId: subLoan.id,
+              clientName: subLoan.loan.client.fullName,
+              clientPhone: subLoan.loan.client.phone,
+              clientAddress: subLoan.loan.client.address,
+              orderIndex: index,
+              amountCollected: new Decimal(0),
+            }));
+
+            await tx.collectionRouteItem.createMany({
+              data: itemsData,
+            });
+
+            return newRoute;
+          });
+
+          const routeInfo = {
+            managerId: manager.id,
+            managerName: manager.fullName,
+            routeId: route.id,
+            itemsCount: subLoans.length,
+            date: DateUtil.format(currentDate, 'dd/MM/yyyy'),
+          };
+
+          dayRoutes.push(routeInfo);
+          allCreatedRoutes.push(routeInfo);
+
+          this.logger.log(
+            `Ruta creada para manager ${manager.fullName} con ${subLoans.length} items en fecha ${DateUtil.format(currentDate, 'dd/MM/yyyy')}`,
+          );
+        } catch (error: any) {
+          this.logger.error(
+            `Error creando ruta para manager ${manager.fullName} en fecha ${DateUtil.format(currentDate, 'dd/MM/yyyy')}:`,
+            error,
+          );
+        }
+      }
+
+      dailySummaries.push({
+        date: DateUtil.format(currentDate, 'dd/MM/yyyy'),
+        routesCreated: dayRoutes.length,
+        routes: dayRoutes,
+      });
+
+      // Avanzar al siguiente día
+      currentDate = currentDate.plus({ days: 1 });
+    }
+
+    return {
+      message: `Se crearon ${allCreatedRoutes.length} rutas de cobro para el período del 15 al 30 de noviembre de 2025`,
+      totalRoutesCreated: allCreatedRoutes.length,
+      period: {
+        start: DateUtil.format(startDate, 'dd/MM/yyyy'),
+        end: DateUtil.format(endDate, 'dd/MM/yyyy'),
+      },
+      dailySummaries,
+      allCreatedRoutes,
     };
   }
 
@@ -701,23 +901,37 @@ export class CollectionRoutesService {
       );
     }
 
-    const expense = await this.prisma.routeExpense.create({
-      data: {
-        routeId,
-        category: createExpenseDto.category as any,
-        amount: new Decimal(createExpenseDto.amount),
-        description: createExpenseDto.description,
-      },
+    // Crear gasto y registrar en collector wallet en una transacción
+    const result = await this.prisma.$transaction(async (tx) => {
+      const expense = await tx.routeExpense.create({
+        data: {
+          routeId,
+          category: createExpenseDto.category as any,
+          amount: new Decimal(createExpenseDto.amount),
+          description: createExpenseDto.description,
+        },
+      });
+
+      // Registrar el gasto en la collector wallet del manager
+      await this.collectorWalletService.recordRouteExpense({
+        userId: route.managerId,
+        amount: Number(createExpenseDto.amount),
+        description: `Gasto de ruta: ${createExpenseDto.description}`,
+        routeId: route.id,
+        transaction: tx,
+      });
+
+      return expense;
     });
 
     return {
-      id: expense.id,
-      routeId: expense.routeId,
-      category: expense.category,
-      amount: Number(expense.amount),
-      description: expense.description,
-      createdAt: expense.createdAt,
-      updatedAt: expense.updatedAt,
+      id: result.id,
+      routeId: result.routeId,
+      category: result.category,
+      amount: Number(result.amount),
+      description: result.description,
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
     };
   }
 

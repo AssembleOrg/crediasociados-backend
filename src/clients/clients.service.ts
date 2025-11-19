@@ -131,7 +131,10 @@ export class ClientsService {
     // Crear nuevo cliente y actualizar cuota en una transacción
     const result = await this.prisma.$transaction(async (tx) => {
       const newClient = await tx.client.create({
-        data: createClientDto,
+        data: {
+          ...createClientDto,
+          verified: false, // Siempre false al crear
+        },
       });
 
       // Asignar el cliente al manager que lo creó
@@ -353,9 +356,15 @@ export class ClientsService {
       }
     }
 
+    // Remover verified del DTO si está presente (no es editable)
+    const { verified, ...updateData } = updateClientDto as any;
+    if (verified !== undefined) {
+      // Si intentan modificar verified, ignorarlo silenciosamente
+    }
+
     const updatedClient = await this.prisma.client.update({
       where: { id },
-      data: updateClientDto,
+      data: updateData,
     });
 
     return updatedClient;
@@ -752,6 +761,199 @@ export class ClientsService {
     return {
       total: clientsWithLastLoan.length,
       clients: clientsWithLastLoan,
+    };
+  }
+
+  async getActiveLoansClients(managerId: string): Promise<any> {
+    // Obtener todos los clientes del manager con préstamos activos
+    const clients = await this.prisma.client.findMany({
+      where: {
+        deletedAt: null,
+        managers: {
+          some: {
+            userId: managerId,
+            deletedAt: null,
+          },
+        },
+        loans: {
+          some: {
+            deletedAt: null,
+            status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] },
+          },
+        },
+      },
+      include: {
+        loans: {
+          where: {
+            deletedAt: null,
+            status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] },
+          },
+          select: {
+            id: true,
+            loanTrack: true,
+            amount: true,
+            status: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    // Transformar y ordenar por cantidad de préstamos activos (descendente)
+    const clientsWithActiveLoans = clients
+      .map((client) => ({
+        id: client.id,
+        nombre: client.fullName,
+        telefono: client.phone,
+        direccion: client.address,
+        cantidadPrestamosActivos: client.loans.length,
+        prestamosActivos: client.loans.map((loan) => ({
+          id: loan.id,
+          loanTrack: loan.loanTrack,
+          amount: Number(loan.amount),
+          status: loan.status,
+          createdAt: loan.createdAt,
+        })),
+      }))
+      .sort((a, b) => b.cantidadPrestamosActivos - a.cantidadPrestamosActivos); // Ordenar por cantidad descendente
+
+    return {
+      total: clientsWithActiveLoans.length,
+      clients: clientsWithActiveLoans,
+    };
+  }
+
+  /**
+   * Verificar un cliente (solo accesible por el subadmin del manager que creó el cliente)
+   */
+  async verifyClient(clientId: string, subadminId: string): Promise<any> {
+    // Obtener el cliente con sus managers
+    const client = await this.prisma.client.findFirst({
+      where: {
+        id: clientId,
+        deletedAt: null,
+      },
+      include: {
+        managers: {
+          where: { deletedAt: null },
+          include: {
+            user: {
+              select: {
+                id: true,
+                createdById: true,
+                role: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    // Verificar que el cliente esté gestionado por un manager creado por este subadmin
+    const isManagedBySubadminManager = client.managers.some((cm) => {
+      const manager = cm.user;
+      return (
+        manager.role === UserRole.MANAGER &&
+        manager.createdById === subadminId
+      );
+    });
+
+    if (!isManagedBySubadminManager) {
+      throw new ForbiddenException(
+        'Solo puedes verificar clientes de managers que tú creaste',
+      );
+    }
+
+    // Verificar que el cliente no esté ya verificado
+    if (client.verified) {
+      throw new BadRequestException('El cliente ya está verificado');
+    }
+
+    // Actualizar el cliente a verificado
+    const updatedClient = await this.prisma.client.update({
+      where: { id: clientId },
+      data: { verified: true },
+      include: {
+        managers: {
+          where: { deletedAt: null },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      ...updatedClient,
+      verified: true,
+    };
+  }
+
+  /**
+   * Obtener todos los clientes que necesitan verificación (solo subadmins)
+   */
+  async getUnverifiedClients(subadminId: string): Promise<any> {
+    // Obtener todos los managers creados por este subadmin
+    const managedUsers = await this.prisma.user.findMany({
+      where: {
+        createdById: subadminId,
+        role: UserRole.MANAGER,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    const managedUserIds = managedUsers.map((u) => u.id);
+
+    if (managedUserIds.length === 0) {
+      return {
+        total: 0,
+        clients: [],
+      };
+    }
+
+    // Obtener todos los clientes no verificados gestionados por estos managers
+    const unverifiedClients = await this.prisma.client.findMany({
+      where: {
+        verified: false,
+        deletedAt: null,
+        managers: {
+          some: {
+            userId: { in: managedUserIds },
+            deletedAt: null,
+          },
+        },
+      },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        address: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      total: unverifiedClients.length,
+      clients: unverifiedClients.map((client) => ({
+        id: client.id,
+        nombre: client.fullName,
+        telefono: client.phone,
+        direccion: client.address,
+      })),
     };
   }
 }

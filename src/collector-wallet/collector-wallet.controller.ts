@@ -8,21 +8,28 @@ import {
   HttpStatus,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { CollectorWalletService } from './collector-wallet.service';
 import {
   WithdrawDto,
+  WithdrawManagerDto,
   GetTransactionsDto,
+  GetCompleteHistoryDto,
+  ManagerDetailDto,
+  CollectionsSummaryDto,
   PeriodReportDto,
   DailySummaryDto,
   TodayCollectionsDto,
   WalletHistoryDto,
+  CashAdjustmentDto,
 } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -43,14 +50,39 @@ export class CollectorWalletController {
   @ApiOperation({
     summary: 'Obtener balance de la wallet de cobros',
     description:
-      'Retorna el balance actual de la wallet de cobros del cobrador autenticado',
+      'Retorna el balance actual de la wallet de cobros. ' +
+      'Para MANAGER: devuelve su propio balance. ' +
+      'Para SUBADMIN: devuelve el balance agregado de todos sus managers.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Balance obtenido exitosamente',
   })
   async getBalance(@CurrentUser() currentUser: any) {
-    return this.collectorWalletService.getBalance(currentUser.id);
+    return this.collectorWalletService.getBalance(
+      currentUser.id,
+      currentUser.role,
+    );
+  }
+
+  @Get('managers-balances')
+  @Roles(UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener balances de wallets de cobros de todos los managers',
+    description:
+      'Retorna la lista de managers con sus balances de wallets de cobros. ' +
+      'Para SUBADMIN: solo muestra sus managers. ' +
+      'Para ADMIN/SUPERADMIN: muestra todos los managers.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Balances obtenidos exitosamente',
+  })
+  async getManagersBalances(@CurrentUser() currentUser: any) {
+    return this.collectorWalletService.getManagersBalances(
+      currentUser.id,
+      currentUser.role,
+    );
   }
 
   @Get('summary')
@@ -114,6 +146,92 @@ export class CollectorWalletController {
       currentUser.id,
       withdrawDto.amount,
       withdrawDto.description,
+    );
+  }
+
+  @Post('cash-adjustment')
+  @Roles(UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Ajuste de caja: Ingresar dinero a la wallet de cobros',
+    description:
+      'Permite al SUBADMIN ingresar dinero a la wallet de cobros de un manager desde su propia wallet. ' +
+      'Se utiliza para cuadreo de caja negativo. El dinero se debita de la wallet del SUBADMIN y se acredita a la collector wallet del manager. ' +
+      'Solo SUBADMIN puede realizar esta operación y solo para managers que él creó.',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Ajuste de caja realizado exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Monto inválido o manager no válido',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo SUBADMIN puede realizar ajustes de caja',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Manager o wallet no encontrada',
+  })
+  async cashAdjustment(
+    @CurrentUser() currentUser: any,
+    @Body() cashAdjustmentDto: CashAdjustmentDto,
+  ) {
+    return this.collectorWalletService.cashAdjustment(
+      currentUser.id,
+      cashAdjustmentDto.managerId,
+      cashAdjustmentDto.amount,
+      cashAdjustmentDto.description,
+    );
+  }
+
+  @Post('withdraw-manager')
+  @Roles(UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Retirar dinero de la wallet de cobros de un manager',
+    description:
+      'Permite al SUBADMIN retirar dinero de la wallet de cobros de un manager. ' +
+      'Solo SUBADMIN puede realizar esta operación y solo para managers que él creó. ' +
+      'El managerId se pasa como query parameter. ' +
+      'La wallet puede quedar con saldo negativo.',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: true,
+    description: 'ID del manager del cual se retirará de su wallet de cobros',
+    example: 'cmhzpk25e0008gx4bllhe9i5t',
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Retiro realizado exitosamente',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Monto inválido, managerId requerido o manager no válido',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Solo SUBADMIN puede retirar de wallets de managers que él creó',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Manager o wallet no encontrada',
+  })
+  async withdrawFromManager(
+    @CurrentUser() currentUser: any,
+    @Query('managerId') managerId: string,
+    @Body() withdrawManagerDto: WithdrawManagerDto,
+  ) {
+    if (!managerId) {
+      throw new BadRequestException('managerId es requerido como query parameter');
+    }
+
+    return this.collectorWalletService.withdrawFromManager(
+      currentUser.id,
+      managerId,
+      withdrawManagerDto.amount,
+      withdrawManagerDto.description,
     );
   }
 
@@ -255,6 +373,179 @@ export class CollectorWalletController {
     return this.collectorWalletService.getTodayCollections(
       currentUser.id,
       currentUser.role,
+    );
+  }
+
+  @Get('complete-history')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener historial completo paginado de todos los movimientos financieros',
+    description:
+      'Devuelve todos los movimientos financieros que afectan la wallet de cobros: ' +
+      'cobros, retiros, gastos de ruta, préstamos y ajustes de caja. ' +
+      'Requiere managerId como query parameter. ' +
+      'Por defecto devuelve 50 movimientos por página ordenados por fecha descendente. ' +
+      'Permite filtrado por tipo de transacción y fechas. ' +
+      'Las fechas se interpretan en zona horaria de Buenos Aires (GMT-3).',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Historial obtenido exitosamente',
+  })
+  @ApiResponse({ status: 400, description: 'managerId es requerido o parámetros inválidos' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para ver este historial' })
+  async getCompleteHistory(
+    @CurrentUser() currentUser: any,
+    @Query() query: GetCompleteHistoryDto,
+  ) {
+    const managerId = query.managerId;
+
+    // Validar permisos
+    if (currentUser.role === UserRole.MANAGER && currentUser.id !== managerId) {
+      throw new ForbiddenException(
+        'Solo puedes ver el historial de tu propia wallet',
+      );
+    }
+
+    if (currentUser.role === UserRole.SUBADMIN) {
+      // Validar que el manager sea del SUBADMIN
+      const manager = await this.collectorWalletService['prisma'].user.findUnique({
+        where: { id: managerId },
+        select: { createdById: true, role: true },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      if (manager.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver el historial de managers que tú creaste',
+        );
+      }
+    }
+
+    const pageNumber = query.page || 1;
+    const limitNumber = query.limit || 50;
+
+    return this.collectorWalletService.getCompleteHistory(
+      managerId,
+      pageNumber,
+      limitNumber,
+      {
+        type: query.type,
+        startDate: query.startDate,
+        endDate: query.endDate,
+      },
+    );
+  }
+
+  @Get('manager-detail')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener información detallada del manager',
+    description:
+      'Devuelve información completa del manager incluyendo: nombre, email, cuota de clientes, ' +
+      'clientes actuales, dinero en calle (monto prestado + intereses no cobrados), ' +
+      'y todos los préstamos con sus subpréstamos y estados de cuotas. ' +
+      'Útil para mostrar en un popup al hacer click en un botón.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Información del manager obtenida exitosamente',
+  })
+  @ApiResponse({ status: 400, description: 'managerId es requerido o parámetros inválidos' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para ver esta información' })
+  @ApiResponse({ status: 404, description: 'Manager no encontrado' })
+  async getManagerDetail(
+    @CurrentUser() currentUser: any,
+    @Query() query: ManagerDetailDto,
+  ) {
+    const managerId = query.managerId;
+
+    // Validar permisos
+    if (currentUser.role === UserRole.MANAGER && currentUser.id !== managerId) {
+      throw new ForbiddenException(
+        'Solo puedes ver tu propia información',
+      );
+    }
+
+    if (currentUser.role === UserRole.SUBADMIN) {
+      // Validar que el manager sea del SUBADMIN
+      const manager = await this.collectorWalletService['prisma'].user.findUnique({
+        where: { id: managerId },
+        select: { createdById: true, role: true },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      if (manager.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver la información de managers que tú creaste',
+        );
+      }
+    }
+
+    return this.collectorWalletService.getManagerDetail(managerId);
+  }
+
+  @Get('collections-summary')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener sumatoria de cobros en un rango de fechas',
+    description:
+      'Devuelve la sumatoria de todos los cobros realizados a subpréstamos ' +
+      'en un rango de fechas para un manager específico. ' +
+      'Solo cuenta transacciones de tipo COLLECTION. ' +
+      'Las fechas deben estar en formato DD/MM/YYYY y se interpretan en zona horaria de Buenos Aires (GMT-3).',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Resumen de cobros obtenido exitosamente',
+  })
+  @ApiResponse({ status: 400, description: 'Parámetros inválidos o fechas incorrectas' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para ver esta información' })
+  @ApiResponse({ status: 404, description: 'Manager no encontrado' })
+  async getCollectionsSummary(
+    @CurrentUser() currentUser: any,
+    @Query() query: CollectionsSummaryDto,
+  ) {
+    const managerId = query.managerId;
+
+    // Validar permisos
+    if (currentUser.role === UserRole.MANAGER && currentUser.id !== managerId) {
+      throw new ForbiddenException(
+        'Solo puedes ver tu propia información',
+      );
+    }
+
+    if (currentUser.role === UserRole.SUBADMIN) {
+      // Validar que el manager sea del SUBADMIN
+      const manager = await this.collectorWalletService['prisma'].user.findUnique({
+        where: { id: managerId },
+        select: { createdById: true, role: true },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      if (manager.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver la información de managers que tú creaste',
+        );
+      }
+    }
+
+    return this.collectorWalletService.getCollectionsSummary(
+      managerId,
+      query.startDate,
+      query.endDate,
     );
   }
 

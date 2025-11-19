@@ -26,6 +26,8 @@ import {
   UpdateClientDto,
   InactiveClientsResponseDto,
   InactiveClientsDto,
+  ActiveLoansClientsDto,
+  UnverifiedClientsDto,
 } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
@@ -174,13 +176,14 @@ export class ClientsController {
   }
 
   @Get('inactive')
-  @Roles(UserRole.SUBADMIN)
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN)
   @ApiOperation({
-    summary: 'Obtener clientes sin préstamos activos de un manager (SUBADMIN)',
+    summary: 'Obtener clientes sin préstamos activos de un manager',
     description:
       'Devuelve la lista de clientes de un manager que no tienen préstamos activos. ' +
       'Incluye solo: nombre, teléfono, dirección y fecha de último préstamo. ' +
-      'Ordenados por fecha de último préstamo DESC (los que nunca tuvieron préstamo aparecen primero).',
+      'Ordenados por fecha de último préstamo DESC (los que nunca tuvieron préstamo aparecen primero). ' +
+      'MANAGER solo puede ver sus propios clientes. SUBADMIN puede ver clientes de sus managers.',
   })
   @ApiQuery({
     name: 'managerId',
@@ -194,7 +197,7 @@ export class ClientsController {
     type: InactiveClientsDto,
   })
   @ApiResponse({ status: 401, description: 'No autorizado' })
-  @ApiResponse({ status: 403, description: 'Solo SUBADMIN puede acceder a este endpoint' })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para ver estos clientes' })
   @ApiResponse({ status: 400, description: 'managerId es requerido' })
   async getInactiveClients(
     @CurrentUser() currentUser: any,
@@ -204,23 +207,114 @@ export class ClientsController {
       throw new BadRequestException('managerId es requerido');
     }
 
-    // Validar que el manager pertenece al SUBADMIN
-    const manager = await this.clientsService['prisma'].user.findUnique({
-      where: { id: managerId },
-      select: { createdById: true, role: true },
-    });
+    // Validar permisos según el rol
+    if (currentUser.role === UserRole.MANAGER) {
+      // MANAGER solo puede ver sus propios clientes
+      if (managerId !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver tus propios clientes inactivos',
+        );
+      }
+    } else if (currentUser.role === UserRole.SUBADMIN) {
+      // SUBADMIN puede ver clientes de sus managers
+      const manager = await this.clientsService['prisma'].user.findUnique({
+        where: { id: managerId },
+        select: { createdById: true, role: true },
+      });
 
-    if (!manager) {
-      throw new NotFoundException('Manager no encontrado');
-    }
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
 
-    if (manager.createdById !== currentUser.id) {
-      throw new ForbiddenException(
-        'Solo puedes ver clientes de managers que tú creaste',
-      );
+      if (manager.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver clientes de managers que tú creaste',
+        );
+      }
     }
 
     return this.clientsService.getInactiveClients(managerId);
+  }
+
+  @Get('active-loans')
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener clientes con préstamos activos',
+    description:
+      'Retorna la lista de clientes que tienen préstamos activos, ordenados por cantidad de préstamos activos (descendente). ' +
+      'Incluye nombre, teléfono, dirección y lista de préstamos activos. ' +
+      'Solo para MANAGER y SUBADMIN.',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: true,
+    description: 'ID del manager',
+    example: 'cmht5jiq20008gxv2ndk6mj8i',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Clientes con préstamos activos obtenidos exitosamente',
+    type: ActiveLoansClientsDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'No tienes permisos para ver estos clientes' })
+  @ApiResponse({ status: 400, description: 'managerId es requerido' })
+  async getActiveLoansClients(
+    @CurrentUser() currentUser: any,
+    @Query('managerId') managerId: string,
+  ): Promise<ActiveLoansClientsDto> {
+    if (!managerId) {
+      throw new BadRequestException('managerId es requerido');
+    }
+
+    // Validar permisos según el rol
+    if (currentUser.role === UserRole.MANAGER) {
+      // MANAGER solo puede ver sus propios clientes
+      if (managerId !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver tus propios clientes con préstamos activos',
+        );
+      }
+    } else if (currentUser.role === UserRole.SUBADMIN) {
+      // SUBADMIN puede ver clientes de sus managers
+      const manager = await this.clientsService['prisma'].user.findUnique({
+        where: { id: managerId },
+        select: { createdById: true, role: true },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      if (manager.createdById !== currentUser.id) {
+        throw new ForbiddenException(
+          'Solo puedes ver clientes de managers que tú creaste',
+        );
+      }
+    }
+
+    return this.clientsService.getActiveLoansClients(managerId);
+  }
+
+  @Get('unverified')
+  @Roles(UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Obtener clientes que necesitan verificación',
+    description:
+      'Retorna la lista de clientes no verificados gestionados por managers del subadmin. ' +
+      'Incluye solo: nombre, teléfono y dirección.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Clientes no verificados obtenidos exitosamente',
+    type: UnverifiedClientsDto,
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Solo SUBADMIN puede acceder' })
+  async getUnverifiedClients(
+    @CurrentUser() currentUser: any,
+  ): Promise<UnverifiedClientsDto> {
+    return this.clientsService.getUnverifiedClients(currentUser.id);
   }
 
   @Get(':id')
@@ -412,5 +506,58 @@ export class ClientsController {
       dateTo,
       groupBy,
     );
+  }
+
+  @Patch(':id/verify')
+  @Roles(UserRole.SUBADMIN)
+  @ApiOperation({
+    summary: 'Verificar un cliente',
+    description:
+      'Marca un cliente como verificado. Solo accesible por el subadmin del manager que creó el cliente.',
+  })
+  @ApiParam({ name: 'id', description: 'Client ID', example: 'cuid123' })
+  @ApiResponse({
+    status: 200,
+    description: 'Cliente verificado exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            fullName: { type: 'string' },
+            verified: { type: 'boolean' },
+          },
+        },
+        message: { type: 'string' },
+        success: { type: 'boolean' },
+        timestamp: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Cliente ya está verificado',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - No tienes permisos para verificar este cliente',
+  })
+  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
+  async verifyClient(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ) {
+    const result = await this.clientsService.verifyClient(
+      id,
+      currentUser.id,
+    );
+    return {
+      data: result,
+      message: 'Cliente verificado exitosamente',
+      success: true,
+      timestamp: new Date().toISOString(),
+    };
   }
 }

@@ -9,7 +9,6 @@ import { DepositDto, WithdrawalDto, TransferDto } from './dto';
 import { UserRole, WalletTransactionType, Currency } from '../common/enums';
 import { Prisma } from '@prisma/client';
 import { DateUtil } from '../common/utils';
-import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 
 @Injectable()
@@ -115,6 +114,7 @@ export class WalletService {
     }
 
     const walletId = wallet.id; // Guardar el ID antes de la transacción
+    const balanceBefore = Number(wallet.balance);
 
     // Realizar depósito en transacción
     const result = await this.prisma.$transaction(async (tx) => {
@@ -128,6 +128,8 @@ export class WalletService {
         },
       });
 
+      const balanceAfter = Number(updatedWallet.balance);
+
       // Crear registro de transacción
       const transaction = await tx.walletTransaction.create({
         data: {
@@ -137,6 +139,8 @@ export class WalletService {
           amount: new Prisma.Decimal(depositDto.amount),
           currency: depositDto.currency,
           description: depositDto.description,
+          balanceBefore: new Prisma.Decimal(balanceBefore),
+          balanceAfter: new Prisma.Decimal(balanceAfter),
         },
       });
 
@@ -181,6 +185,8 @@ export class WalletService {
       );
     }
 
+    const balanceBefore = Number(wallet.balance);
+
     // Realizar retiro en transacción
     const result = await this.prisma.$transaction(async (tx) => {
       // Actualizar balance
@@ -193,6 +199,8 @@ export class WalletService {
         },
       });
 
+      const balanceAfter = Number(updatedWallet.balance);
+
       // Crear registro de transacción
       const transaction = await tx.walletTransaction.create({
         data: {
@@ -202,6 +210,8 @@ export class WalletService {
           amount: new Prisma.Decimal(withdrawalDto.amount),
           currency: withdrawalDto.currency,
           description: withdrawalDto.description,
+          balanceBefore: new Prisma.Decimal(balanceBefore),
+          balanceAfter: new Prisma.Decimal(balanceAfter),
         },
       });
 
@@ -296,21 +306,14 @@ export class WalletService {
 
     const managerWalletId = managerWallet.id; // Guardar el ID antes de la transacción
     const transferAmount = transferDto.amount;
+    const subadminBalanceBefore = Number(subadminWallet.balance);
+    const managerBalanceBefore = Number(managerWallet.balance);
 
     // Determinar dirección de la transferencia
     // Positivo: SUBADMIN -> MANAGER (transferencia normal)
     // Negativo: MANAGER -> SUBADMIN (retirar fondos del manager)
     const isPositiveTransfer = transferAmount > 0;
     const absoluteAmount = Math.abs(transferAmount);
-
-    // Calcular nuevos balances proyectados
-    const newSubadminBalance = isPositiveTransfer
-      ? Number(subadminWallet.balance) - absoluteAmount
-      : Number(subadminWallet.balance) + absoluteAmount;
-
-    const newManagerBalance = isPositiveTransfer
-      ? Number(managerWallet.balance) + absoluteAmount
-      : Number(managerWallet.balance) - absoluteAmount;
 
     // Se permite saldo negativo en el sistema
     // Las validaciones de saldo se removieron para permitir operaciones con saldo negativo
@@ -337,6 +340,8 @@ export class WalletService {
         },
       });
 
+      const subadminBalanceAfter = Number(updatedSubadminWallet.balance);
+
       // Crear una única transacción que registra la transferencia
       // userId: quien inicia la transferencia (siempre el SUBADMIN)
       // relatedUserId: el otro usuario involucrado (el MANAGER)
@@ -352,6 +357,8 @@ export class WalletService {
           currency: transferDto.currency,
           description: transferDto.description,
           relatedUserId: transferDto.managerId,
+          balanceBefore: new Prisma.Decimal(subadminBalanceBefore),
+          balanceAfter: new Prisma.Decimal(subadminBalanceAfter),
         },
       });
 
@@ -387,14 +394,14 @@ export class WalletService {
    */
   async getTransactions(
     userId: string,
-    paginationDto: PaginationDto,
+    pagination: { page?: number; limit?: number },
     filters?: {
       type?: WalletTransactionType;
       startDate?: string;
       endDate?: string;
     },
   ): Promise<PaginatedResponse<any>> {
-    const { page = 1, limit = 10 } = paginationDto;
+    const { page = 1, limit = 50 } = pagination; // Aumentado a 50 para mostrar más transacciones por defecto
     const skip = (page - 1) * limit;
 
     // Obtener cartera
@@ -409,11 +416,12 @@ export class WalletService {
     // Construir filtros - incluir transacciones donde el usuario es el origen o el destino
     const whereClause: any = {
       OR: [
-        { walletId: wallet.id }, // Transacciones en la cartera del usuario
+        { walletId: wallet.id }, // Transacciones en la cartera del usuario (incluye depósitos, retiros, etc.)
         { relatedUserId: userId }, // Transferencias donde el usuario es el destinatario
       ],
     };
 
+    // Aplicar filtros adicionales
     if (filters?.type) {
       whereClause.type = filters.type;
     }
@@ -421,10 +429,14 @@ export class WalletService {
     if (filters?.startDate || filters?.endDate) {
       whereClause.createdAt = {};
       if (filters.startDate) {
-        whereClause.createdAt.gte = DateUtil.parseToDate(filters.startDate);
+        // Usar inicio del día en zona horaria de Buenos Aires
+        const startDt = DateUtil.fromISO(filters.startDate).startOf('day');
+        whereClause.createdAt.gte = DateUtil.toJSDate(startDt);
       }
       if (filters.endDate) {
-        whereClause.createdAt.lte = DateUtil.parseToDate(filters.endDate);
+        // Usar final del día en zona horaria de Buenos Aires
+        const endDt = DateUtil.fromISO(filters.endDate).endOf('day');
+        whereClause.createdAt.lte = DateUtil.toJSDate(endDt);
       }
     }
 
@@ -473,6 +485,8 @@ export class WalletService {
           amount: Number(t.amount),
           currency: t.currency,
           description: t.description,
+          balanceBefore: t.balanceBefore ? Number(t.balanceBefore) : null,
+          balanceAfter: t.balanceAfter ? Number(t.balanceAfter) : null,
           createdAt: t.createdAt,
           user: t.user,
           relatedUser,
@@ -540,8 +554,10 @@ export class WalletService {
     // NO SE VALIDA SALDO - Se permite saldo negativo en la wallet principal
     // Los managers pueden operar con saldo negativo
 
+    const balanceBefore = Number(wallet.balance);
+
     // Actualizar balance
-    await tx.wallet.update({
+    const updatedWallet = await tx.wallet.update({
       where: { id: wallet.id },
       data: {
         balance: {
@@ -549,6 +565,8 @@ export class WalletService {
         },
       },
     });
+
+    const balanceAfter = Number(updatedWallet.balance);
 
     // Crear transacción
     await tx.walletTransaction.create({
@@ -559,6 +577,8 @@ export class WalletService {
         amount: new Prisma.Decimal(amount),
         currency: wallet.currency,
         description,
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
       },
     });
   }
@@ -584,8 +604,10 @@ export class WalletService {
       throw new NotFoundException('Cartera no encontrada');
     }
 
+    const balanceBefore = Number(wallet.balance);
+
     // Actualizar balance
-    await tx.wallet.update({
+    const updatedWallet = await tx.wallet.update({
       where: { id: wallet.id },
       data: {
         balance: {
@@ -593,6 +615,8 @@ export class WalletService {
         },
       },
     });
+
+    const balanceAfter = Number(updatedWallet.balance);
 
     // Crear transacción
     await tx.walletTransaction.create({
@@ -603,6 +627,8 @@ export class WalletService {
         amount: new Prisma.Decimal(amount),
         currency: wallet.currency,
         description,
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
       },
     });
   }

@@ -29,6 +29,15 @@ export class WalletHistoryItemDto {
   @ApiProperty({ example: 'subloan_id_here', required: false })
   subLoanId?: string;
 
+  @ApiProperty({ example: 'route_expense_id_here', required: false })
+  routeExpenseId?: string;
+
+  @ApiProperty({ example: 'route_id_here', required: false })
+  routeId?: string;
+
+  @ApiProperty({ example: 'COMBUSTIBLE', required: false })
+  expenseCategory?: string;
+
   @ApiProperty({ example: '2024-11-11T10:30:00.000Z' })
   createdAt: Date;
 }

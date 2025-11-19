@@ -439,28 +439,82 @@ export class UsersService {
             currency: true,
           },
         },
+        collectorWallet: {
+          select: {
+            id: true,
+            balance: true,
+            currency: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    return createdUsers.map((user) => {
-      const response = convertPrismaUserToResponse(user);
-      return {
-        ...response,
-        clientQuota: user.clientQuota,
-        usedClientQuota: user.usedClientQuota,
-        availableClientQuota: user.clientQuota - user.usedClientQuota,
-        wallet: user.wallet
-          ? {
-              id: user.wallet.id,
-              balance: Number(user.wallet.balance),
-              currency: user.wallet.currency,
+    // Recalcular balances de wallets de cobros para cada manager
+    const usersWithRecalculatedBalances = await Promise.all(
+      createdUsers.map(async (user) => {
+        let collectorWalletBalance = 0;
+        
+        // Si es MANAGER, recalcular balance de su wallet de cobros
+        if (user.role === 'MANAGER' && user.collectorWallet) {
+          // Recalcular balance desde transacciones
+          const transactions = await this.prisma.collectorWalletTransaction.findMany({
+            where: { walletId: user.collectorWallet.id },
+            orderBy: { createdAt: 'asc' },
+          });
+
+          let calculatedBalance = 0;
+          for (const transaction of transactions) {
+            if (transaction.type === 'COLLECTION') {
+              calculatedBalance += Number(transaction.amount);
+            } else if (transaction.type === 'WITHDRAWAL') {
+              calculatedBalance -= Number(transaction.amount);
             }
-          : null,
-      };
-    });
+          }
+
+          collectorWalletBalance = calculatedBalance;
+
+          // Si hay discrepancia, actualizar el balance almacenado
+          const storedBalance = Number(user.collectorWallet.balance);
+          if (Math.abs(calculatedBalance - storedBalance) > 0.01) {
+            await this.prisma.collectorWallet.update({
+              where: { id: user.collectorWallet.id },
+              data: {
+                balance: calculatedBalance,
+              },
+            });
+          }
+        } else if (user.collectorWallet) {
+          collectorWalletBalance = Number(user.collectorWallet.balance);
+        }
+
+        const response = convertPrismaUserToResponse(user);
+        return {
+          ...response,
+          clientQuota: user.clientQuota,
+          usedClientQuota: user.usedClientQuota,
+          availableClientQuota: user.clientQuota - user.usedClientQuota,
+          wallet: user.wallet
+            ? {
+                id: user.wallet.id,
+                balance: Number(user.wallet.balance),
+                currency: user.wallet.currency,
+              }
+            : null,
+          collectorWallet: user.collectorWallet
+            ? {
+                id: user.collectorWallet.id,
+                balance: collectorWalletBalance,
+                currency: user.collectorWallet.currency,
+              }
+            : null,
+        };
+      }),
+    );
+
+    return usersWithRecalculatedBalances;
   }
 
   async getUserHierarchy(userId: string): Promise<{
