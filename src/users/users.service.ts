@@ -62,7 +62,7 @@ export class UsersService {
 
     // No DNI/CUIT uniqueness validation needed - moved to Client model
 
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 12);
 
     // Prepare data with client quota
     let clientQuota = createUserDto.clientQuota || 0;
@@ -263,7 +263,7 @@ export class UsersService {
 
     const updateData: any = { ...updateUserDto };
     if (updateUserDto.password) {
-      updateData.password = await bcrypt.hash(updateUserDto.password, 10);
+      updateData.password = await bcrypt.hash(updateUserDto.password, 12);
     }
 
     // Si se está actualizando clientQuota de un MANAGER o SUBADMIN, recalcular usedClientQuota del creador
@@ -1214,12 +1214,12 @@ export class UsersService {
       throw new ForbiddenException('Solo los MANAGER pueden acceder a este endpoint');
     }
 
-    // 1. Capital Disponible: Saldo de la wallet
-    const wallet = await this.prisma.wallet.findUnique({
+    // 1. Capital Disponible: Saldo de la caja fuerte
+    const safe = await this.prisma.safe.findUnique({
       where: { userId: managerId },
     });
 
-    const capitalDisponible = wallet ? Number(wallet.balance) : 0;
+    const capitalDisponible = safe ? Number(safe.balance) : 0;
 
     // 2. Capital Asignado: Suma de todas las transferencias recibidas del SUBADMIN
     const transferenciasRecibidas = await this.prisma.walletTransaction.findMany({

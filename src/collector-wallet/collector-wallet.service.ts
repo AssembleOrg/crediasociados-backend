@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, UserRole } from '@prisma/client';
-import { CollectorWalletTransactionType } from '../common/enums';
+import { CollectorWalletTransactionType, SafeTransactionType } from '../common/enums';
 import { DateUtil } from '../common/utils/date.util';
 import { WalletService } from '../wallet/wallet.service';
 import { WalletTransactionType } from '../common/enums';
@@ -297,6 +297,7 @@ export class CollectorWalletService {
   /**
    * Realizar un retiro de la wallet de cobrador
    * PERMITE SALDO NEGATIVO - La wallet puede tener saldo negativo
+   * El dinero retirado se deposita automáticamente en la caja fuerte
    */
   async withdraw(
     userId: string,
@@ -307,7 +308,7 @@ export class CollectorWalletService {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
-    // Usar transacción atómica para el retiro
+    // Usar transacción atómica para el retiro y depósito en caja fuerte
     const result = await this.prisma.$transaction(
       async (tx) => {
         // Obtener wallet con lock para evitar condiciones de carrera
@@ -345,6 +346,47 @@ export class CollectorWalletService {
             description,
             balanceBefore: new Prisma.Decimal(balanceBefore),
             balanceAfter: new Prisma.Decimal(balanceAfter),
+          },
+        });
+
+        // Depositar en la caja fuerte
+        let safe = await tx.safe.findUnique({
+          where: { userId },
+        });
+
+        if (!safe) {
+          safe = await tx.safe.create({
+            data: {
+              userId,
+              balance: new Prisma.Decimal(0),
+              currency: wallet.currency,
+            },
+          });
+        }
+
+        const safeBalanceBefore = Number(safe.balance);
+        const updatedSafe = await tx.safe.update({
+          where: { id: safe.id },
+          data: {
+            balance: {
+              increment: new Prisma.Decimal(amount),
+            },
+          },
+        });
+
+        const safeBalanceAfter = Number(updatedSafe.balance);
+
+        // Crear transacción en la caja fuerte
+        await tx.safeTransaction.create({
+          data: {
+            safeId: safe.id,
+            userId,
+            type: SafeTransactionType.TRANSFER_FROM_COLLECTOR,
+            amount: new Prisma.Decimal(amount),
+            currency: safe.currency,
+            description: `Retiro desde wallet de cobros: ${description}`,
+            balanceBefore: new Prisma.Decimal(safeBalanceBefore),
+            balanceAfter: new Prisma.Decimal(safeBalanceAfter),
           },
         });
 
@@ -426,19 +468,27 @@ export class CollectorWalletService {
           throw new NotFoundException('Wallet de cobrador no encontrada');
         }
 
-        // Obtener wallet del SUBADMIN
-        const subadminWallet = await tx.wallet.findUnique({
-          where: { userId: subadminId },
+        const collectorBalanceBefore = Number(collectorWallet.balance);
+
+        // 2. Obtener o crear Safe del manager
+        let managerSafe = await tx.safe.findUnique({
+          where: { userId: managerId },
         });
 
-        if (!subadminWallet) {
-          throw new NotFoundException('Wallet del SUBADMIN no encontrada');
+        if (!managerSafe) {
+          this.logger.log(`Creando caja fuerte para manager ${managerId}`);
+          managerSafe = await tx.safe.create({
+            data: {
+              userId: managerId,
+              balance: new Prisma.Decimal(0),
+              currency: 'ARS',
+            },
+          });
         }
 
-        const collectorBalanceBefore = Number(collectorWallet.balance);
-        const subadminBalanceBefore = Number(subadminWallet.balance);
+        const safeBalanceBefore = Number(managerSafe.balance);
 
-        // 2. Debitar de la collector wallet del manager
+        // 3. Debitar de la collector wallet del manager
         const updatedCollectorWallet = await tx.collectorWallet.update({
           where: { id: collectorWallet.id },
           data: {
@@ -450,9 +500,9 @@ export class CollectorWalletService {
 
         const collectorBalanceAfter = Number(updatedCollectorWallet.balance);
 
-        // 3. Acreditar a la wallet del SUBADMIN
-        const updatedSubadminWallet = await tx.wallet.update({
-          where: { id: subadminWallet.id },
+        // 4. Acreditar a la Safe del manager (depósito)
+        const updatedManagerSafe = await tx.safe.update({
+          where: { id: managerSafe.id },
           data: {
             balance: {
               increment: new Prisma.Decimal(amount),
@@ -460,9 +510,9 @@ export class CollectorWalletService {
           },
         });
 
-        const subadminBalanceAfter = Number(updatedSubadminWallet.balance);
+        const safeBalanceAfter = Number(updatedManagerSafe.balance);
 
-        // 4. Registrar transacción de retiro en la collector wallet
+        // 5. Registrar transacción de retiro en la collector wallet
         const collectorTransaction = await tx.collectorWalletTransaction.create({
           data: {
             walletId: collectorWallet.id,
@@ -476,29 +526,29 @@ export class CollectorWalletService {
           },
         });
 
-        // 5. Registrar transacción en la wallet del SUBADMIN
-        const subadminTransaction = await tx.walletTransaction.create({
+        // 6. Registrar transacción de depósito en la Safe del manager
+        const safeTransaction = await tx.safeTransaction.create({
           data: {
-            walletId: subadminWallet.id,
-            userId: subadminId,
-            type: WalletTransactionType.TRANSFER_FROM_SUBADMIN,
+            safeId: managerSafe.id,
+            userId: managerId,
+            type: SafeTransactionType.TRANSFER_FROM_COLLECTOR,
             amount: new Prisma.Decimal(amount),
-            currency: subadminWallet.currency,
-            description: `Retiro de collector wallet del manager: ${description}`,
-            relatedUserId: managerId,
-            balanceBefore: new Prisma.Decimal(subadminBalanceBefore),
-            balanceAfter: new Prisma.Decimal(subadminBalanceAfter),
+            currency: managerSafe.currency,
+            description: `Retiro de wallet de cobros: ${description}`,
+            balanceBefore: new Prisma.Decimal(safeBalanceBefore),
+            balanceAfter: new Prisma.Decimal(safeBalanceAfter),
           },
         });
 
         this.logger.log(
-          `Retiro de manager realizado por SUBADMIN: SUBADMIN ${subadminId} -> MANAGER ${managerId}, Monto ${amount}, Collector balance ${collectorBalanceAfter}, Subadmin balance ${subadminBalanceAfter}`,
+          `Retiro de manager realizado por SUBADMIN: SUBADMIN ${subadminId} -> MANAGER ${managerId}, Monto ${amount}, Collector balance ${collectorBalanceAfter}, Safe balance ${safeBalanceAfter}`,
         );
 
         return {
           transaction: collectorTransaction,
           wallet: updatedCollectorWallet,
-          subadminWallet: updatedSubadminWallet,
+          safeTransaction: safeTransaction,
+          safe: updatedManagerSafe,
         };
       },
       {
@@ -513,6 +563,15 @@ export class CollectorWalletService {
       balanceAfter: Number(result.transaction.balanceAfter),
       description: result.transaction.description,
       createdAt: result.transaction.createdAt,
+      safeTransaction: {
+        id: result.safeTransaction.id,
+        type: result.safeTransaction.type,
+        amount: Number(result.safeTransaction.amount),
+        balanceBefore: Number(result.safeTransaction.balanceBefore),
+        balanceAfter: Number(result.safeTransaction.balanceAfter),
+        description: result.safeTransaction.description,
+        createdAt: result.safeTransaction.createdAt,
+      },
       manager: {
         id: managerId,
         email: manager.email,
@@ -671,23 +730,32 @@ export class CollectorWalletService {
     }
 
     // Realizar ajuste en transacción atómica
+    // El ajuste de caja debita de la Safe del manager y acredita a su collector wallet
     const result = await this.prisma.$transaction(async (tx) => {
-      // 1. Obtener wallets
-      const subadminWallet = await tx.wallet.findUnique({
-        where: { userId: subadminId },
+      // 1. Obtener o crear Safe del manager
+      let safe = await tx.safe.findUnique({
+        where: { userId: managerId },
       });
 
-      if (!subadminWallet) {
-        throw new NotFoundException('Wallet del SUBADMIN no encontrada');
+      if (!safe) {
+        safe = await tx.safe.create({
+          data: {
+            userId: managerId,
+            balance: new Prisma.Decimal(0),
+            currency: 'ARS',
+          },
+        });
       }
 
+      // 2. Obtener o crear collector wallet del manager
       const managerCollectorWallet = await this.getOrCreateWallet(managerId, tx);
-      const subadminBalanceBefore = Number(subadminWallet.balance);
+      
+      const safeBalanceBefore = Number(safe.balance);
       const collectorBalanceBefore = Number(managerCollectorWallet.balance);
 
-      // 2. Debitar de la wallet del subadmin
-      const updatedSubadminWallet = await tx.wallet.update({
-        where: { id: subadminWallet.id },
+      // 3. Debitar de la Safe del manager (permite saldo negativo)
+      const updatedSafe = await tx.safe.update({
+        where: { id: safe.id },
         data: {
           balance: {
             decrement: new Prisma.Decimal(amount),
@@ -695,9 +763,9 @@ export class CollectorWalletService {
         },
       });
 
-      const subadminBalanceAfter = Number(updatedSubadminWallet.balance);
+      const safeBalanceAfter = Number(updatedSafe.balance);
 
-      // 3. Acreditar a la collector wallet del manager
+      // 4. Acreditar a la collector wallet del manager
       const updatedCollectorWallet = await tx.collectorWallet.update({
         where: { id: managerCollectorWallet.id },
         data: {
@@ -709,22 +777,21 @@ export class CollectorWalletService {
 
       const collectorBalanceAfter = Number(updatedCollectorWallet.balance);
 
-      // 4. Registrar transacción en la wallet del subadmin
-      const subadminTransaction = await tx.walletTransaction.create({
+      // 5. Crear transacción en la Safe del manager
+      const safeTransaction = await tx.safeTransaction.create({
         data: {
-          walletId: subadminWallet.id,
-          userId: subadminId,
-          type: WalletTransactionType.TRANSFER_TO_MANAGER,
+          safeId: safe.id,
+          userId: managerId,
+          type: SafeTransactionType.TRANSFER_TO_COLLECTOR,
           amount: new Prisma.Decimal(amount),
-          currency: subadminWallet.currency,
-          description: `Ajuste de caja a manager: ${description}`,
-          relatedUserId: managerId,
-          balanceBefore: new Prisma.Decimal(subadminBalanceBefore),
-          balanceAfter: new Prisma.Decimal(subadminBalanceAfter),
+          currency: safe.currency,
+          description: `Ajuste de caja a wallet de cobros: ${description}`,
+          balanceBefore: new Prisma.Decimal(safeBalanceBefore),
+          balanceAfter: new Prisma.Decimal(safeBalanceAfter),
         },
       });
 
-      // 5. Registrar transacción en la collector wallet del manager
+      // 6. Registrar transacción en la collector wallet del manager
       const collectorTransaction = await tx.collectorWalletTransaction.create({
         data: {
           walletId: managerCollectorWallet.id,
@@ -732,38 +799,47 @@ export class CollectorWalletService {
           type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
           amount: new Prisma.Decimal(amount),
           currency: managerCollectorWallet.currency,
-          description: `Ajuste de caja desde SUBADMIN: ${description}`,
+          description: `Ajuste de caja desde caja fuerte: ${description}`,
           balanceBefore: new Prisma.Decimal(collectorBalanceBefore),
           balanceAfter: new Prisma.Decimal(collectorBalanceAfter),
         },
       });
 
       this.logger.log(
-        `Ajuste de caja realizado: SUBADMIN ${subadminId} -> MANAGER ${managerId}, Monto ${amount}`,
+        `Ajuste de caja realizado: SUBADMIN ${subadminId} -> MANAGER ${managerId}, Monto ${amount}, Safe balance ${safeBalanceAfter}, Collector balance ${collectorBalanceAfter}`,
       );
 
       return {
-        subadminWallet: updatedSubadminWallet,
+        safe: updatedSafe,
         collectorWallet: updatedCollectorWallet,
-        subadminTransaction,
+        safeTransaction,
         collectorTransaction,
-        subadminBalanceBefore,
+        safeBalanceBefore,
         collectorBalanceBefore,
       };
     });
 
     return {
-      subadminWallet: {
-        balanceBefore: result.subadminBalanceBefore,
-        balanceAfter: Number(result.subadminWallet.balance),
-        newBalance: Number(result.subadminWallet.balance),
+      safe: {
+        balanceBefore: result.safeBalanceBefore,
+        balanceAfter: Number(result.safe.balance),
+        newBalance: Number(result.safe.balance),
       },
       collectorWallet: {
         balanceBefore: result.collectorBalanceBefore,
         balanceAfter: Number(result.collectorWallet.balance),
         newBalance: Number(result.collectorWallet.balance),
       },
-      transaction: {
+      safeTransaction: {
+        id: result.safeTransaction.id,
+        type: result.safeTransaction.type,
+        amount: Number(result.safeTransaction.amount),
+        description: result.safeTransaction.description,
+        balanceBefore: Number(result.safeTransaction.balanceBefore),
+        balanceAfter: Number(result.safeTransaction.balanceAfter),
+        createdAt: result.safeTransaction.createdAt,
+      },
+      collectorTransaction: {
         id: result.collectorTransaction.id,
         type: result.collectorTransaction.type,
         amount: Number(result.collectorTransaction.amount),
@@ -1320,6 +1396,7 @@ export class CollectorWalletService {
         id: true,
         loanTrack: true,
         amount: true,
+        originalAmount: true,
         currency: true,
         client: {
           select: {
@@ -1331,7 +1408,7 @@ export class CollectorWalletService {
     });
 
     const totalLoaned = loansCreatedToday.reduce(
-      (sum, loan) => sum + Number(loan.amount),
+      (sum, loan) => sum + Number(loan.originalAmount),
       0,
     );
 
