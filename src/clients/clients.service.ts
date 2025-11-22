@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClientDto, UpdateClientDto } from './dto';
-import { UserRole } from 'src/common/enums';
+import { UserRole, LoanStatus } from 'src/common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 import { DateUtil } from '../common/utils';
@@ -391,6 +391,34 @@ export class ClientsService {
     if (!clientManager) {
       throw new ForbiddenException(
         'No tiene permisos para eliminar este cliente',
+      );
+    }
+
+    // Verificar si el cliente tiene préstamos activos
+    const activeLoans = await this.prisma.loan.findMany({
+      where: {
+        clientId: id,
+        deletedAt: null,
+        status: {
+          in: [
+            LoanStatus.PENDING,
+            LoanStatus.APPROVED,
+            LoanStatus.ACTIVE,
+            LoanStatus.DEFAULTED,
+          ],
+        },
+      },
+      select: {
+        id: true,
+        loanTrack: true,
+        status: true,
+      },
+    });
+
+    if (activeLoans.length > 0) {
+      const loanTracks = activeLoans.map((loan) => loan.loanTrack).join(', ');
+      throw new BadRequestException(
+        `No se puede eliminar el cliente porque tiene ${activeLoans.length} préstamo(s) activo(s): ${loanTracks}`,
       );
     }
 

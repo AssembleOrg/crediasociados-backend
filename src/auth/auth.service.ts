@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 
@@ -19,9 +20,37 @@ export class AuthService {
 
   async validateUser(email: string, password: string) {
     this.logger.log(`Validating user ${email}`);
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    // Buscar usuario con email case-insensitive usando consulta raw SQL
+    // PostgreSQL: usar LOWER() para comparación case-insensitive
+    // Las columnas en la BD están en camelCase (con comillas dobles)
+    const users = await this.prisma.$queryRaw<Array<{
+      id: string;
+      email: string;
+      password: string;
+      fullName: string;
+      role: string;
+      phone: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+      deletedAt: Date | null;
+      createdById: string | null;
+      clientQuota: number;
+      usedClientQuota: number;
+      commission: number | null;
+    }>>(
+      Prisma.sql`
+        SELECT * FROM users 
+        WHERE LOWER("email") = LOWER(${email})
+        AND "deletedAt" IS NULL
+        LIMIT 1
+      `
+    );
+
+    if (users.length === 0) {
+      return null;
+    }
+
+    const user = users[0];
 
     if (user && (await bcrypt.compare(password, user.password))) {
       const { password: _, ...result } = user;
@@ -140,7 +169,7 @@ export class AuthService {
     }
 
     // 3. Hash de la nueva contraseña
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // 4. Actualizar la contraseña
     await this.prisma.user.update({

@@ -4,12 +4,14 @@ import { ScheduledTasksService } from './scheduled-tasks.service';
 import { ScheduledTasksController } from './scheduled-tasks.controller';
 import { SubLoansModule } from '../sub-loans/sub-loans.module';
 import { CollectionRoutesModule } from '../collection-routes/collection-routes.module';
+import { DailyReportsModule } from '../daily-reports/daily-reports.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     SubLoansModule,
     CollectionRoutesModule,
+    DailyReportsModule,
   ],
   controllers: [ScheduledTasksController],
   providers: [ScheduledTasksService],

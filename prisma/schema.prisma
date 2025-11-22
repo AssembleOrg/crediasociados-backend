@@ -8,30 +8,33 @@ datasource db {
 }
 
 model User {
-  id                       String                       @id @default(cuid())
-  email                    String                       @unique
-  password                 String
-  phone                    String?
-  fullName                 String
-  role                     UserRole                     @default(MANAGER)
-  createdAt                DateTime                     @default(now())
-  updatedAt                DateTime                     @updatedAt
-  deletedAt                DateTime?
-  createdById              String?
-  clientQuota              Int                          @default(0)
-  usedClientQuota          Int                          @default(0)
-  commission               Decimal?                     @db.Decimal(5, 2) // Porcentaje de comisión asignado por el subadmin
-  managedClients           ClientManager[]
-  refreshTokens            RefreshToken[]
-  wallet                   Wallet?
-  dailyClosures            DailyClosure[]
-  walletTransactions       WalletTransaction[]
-  collectionRoutes         DailyCollectionRoute[]       @relation("ManagerCollectionRoutes")
-  payments                 ManagerPayment[]             @relation("ManagerPayments") // Pagos recibidos por el manager
-  collectorWallet          CollectorWallet?
-  collectorWalletTxs       CollectorWalletTransaction[]
-  createdBy                User?                        @relation("UserCreatedBy", fields: [createdById], references: [id])
-  createdUsers             User[]                       @relation("UserCreatedBy")
+  id                 String                       @id @default(cuid())
+  email              String                       @unique
+  password           String
+  phone              String?
+  fullName           String
+  role               UserRole                     @default(MANAGER)
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+  deletedAt          DateTime?
+  createdById        String?
+  clientQuota        Int                          @default(0)
+  usedClientQuota    Int                          @default(0)
+  commission         Decimal?                     @db.Decimal(5, 2) // Porcentaje de comisión asignado por el subadmin
+  managedClients     ClientManager[]
+  refreshTokens      RefreshToken[]
+  wallet             Wallet?
+  dailyClosures      DailyClosure[]
+  walletTransactions WalletTransaction[]
+  collectionRoutes   DailyCollectionRoute[]       @relation("ManagerCollectionRoutes")
+  payments           ManagerPayment[]             @relation("ManagerPayments") // Pagos recibidos por el manager
+  collectorWallet    CollectorWallet?
+  collectorWalletTxs CollectorWalletTransaction[]
+  safe               Safe?
+  safeTransactions   SafeTransaction[]
+  safeExpenses       SafeExpense[]                @relation("SubadminExpenses")
+  createdBy          User?                        @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers       User[]                       @relation("UserCreatedBy")
 
   @@map("users")
 }
@@ -81,9 +84,9 @@ model ManagerPayment {
   updatedAt   DateTime @updatedAt
   manager     User     @relation("ManagerPayments", fields: [managerId], references: [id], onDelete: Cascade)
 
-  @@map("manager_payments")
   @@index([managerId])
   @@index([paymentDate])
+  @@map("manager_payments")
 }
 
 model Loan {
@@ -392,96 +395,96 @@ model AuditLog {
   description String?
   createdAt   DateTime    @default(now())
 
-  @@map("audit_logs")
   @@index([userId])
   @@index([entity])
   @@index([action])
   @@index([createdAt])
+  @@map("audit_logs")
 }
 
 model HttpLog {
-  id            String   @id @default(cuid())
-  method        String // GET, POST, PUT, DELETE, etc.
-  url           String
-  endpoint      String // Ruta sin query params
-  statusCode    Int
-  responseTime  Int // En milisegundos
-  ip            String?
-  userAgent     String?
-  userId        String?
-  userEmail     String?
-  requestBody   Json? // Body de la request
-  responseBody  Json? // Body de la respuesta (opcional, puede ser grande)
-  queryParams   Json? // Query parameters
-  headers       Json? // Headers importantes
-  errorMessage  String? // Si hubo error
-  createdAt     DateTime @default(now())
+  id           String   @id @default(cuid())
+  method       String // GET, POST, PUT, DELETE, etc.
+  url          String
+  endpoint     String // Ruta sin query params
+  statusCode   Int
+  responseTime Int // En milisegundos
+  ip           String?
+  userAgent    String?
+  userId       String?
+  userEmail    String?
+  requestBody  Json? // Body de la request
+  responseBody Json? // Body de la respuesta (opcional, puede ser grande)
+  queryParams  Json? // Query parameters
+  headers      Json? // Headers importantes
+  errorMessage String? // Si hubo error
+  createdAt    DateTime @default(now())
 
-  @@map("http_logs")
   @@index([method])
   @@index([statusCode])
   @@index([userId])
   @@index([createdAt])
   @@index([endpoint])
+  @@map("http_logs")
 }
 
 model DailyCollectionRoute {
-  id                String                 @id @default(cuid())
-  managerId         String
-  routeDate         DateTime // Fecha de la ruta (sin hora)
-  status            CollectionRouteStatus  @default(ACTIVE)
-  totalCollected    Decimal                @default(0) @db.Decimal(40, 2)
-  totalExpenses     Decimal                @default(0) @db.Decimal(40, 2)
-  netAmount         Decimal                @default(0) @db.Decimal(40, 2)
-  notes             String?
-  closedAt          DateTime?
-  createdAt         DateTime               @default(now())
-  updatedAt         DateTime               @updatedAt
-  manager           User                   @relation("ManagerCollectionRoutes", fields: [managerId], references: [id], onDelete: Cascade)
-  items             CollectionRouteItem[]
-  expenses          RouteExpense[]
+  id             String                @id @default(cuid())
+  managerId      String
+  routeDate      DateTime // Fecha de la ruta (sin hora)
+  status         CollectionRouteStatus @default(ACTIVE)
+  totalCollected Decimal               @default(0) @db.Decimal(40, 2)
+  totalExpenses  Decimal               @default(0) @db.Decimal(40, 2)
+  netAmount      Decimal               @default(0) @db.Decimal(40, 2)
+  notes          String?
+  closedAt       DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  manager        User                  @relation("ManagerCollectionRoutes", fields: [managerId], references: [id], onDelete: Cascade)
+  items          CollectionRouteItem[]
+  expenses       RouteExpense[]
 
   @@unique([managerId, routeDate])
-  @@map("daily_collection_routes")
   @@index([managerId])
   @@index([routeDate])
   @@index([status])
+  @@map("daily_collection_routes")
 }
 
 model CollectionRouteItem {
-  id                  String                @id @default(cuid())
-  routeId             String
-  subLoanId           String?               // Nullable para preservar histórico si se elimina el subloan
-  clientName          String
-  clientPhone         String?
-  clientAddress       String?
-  orderIndex          Int                   @default(0)
-  amountCollected     Decimal               @default(0) @db.Decimal(40, 2)
-  notes               String?
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  route               DailyCollectionRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  subLoan             SubLoan?              @relation(fields: [subLoanId], references: [id], onDelete: SetNull)
+  id              String               @id @default(cuid())
+  routeId         String
+  subLoanId       String? // Nullable para preservar histórico si se elimina el subloan
+  clientName      String
+  clientPhone     String?
+  clientAddress   String?
+  orderIndex      Int                  @default(0)
+  amountCollected Decimal              @default(0) @db.Decimal(40, 2)
+  notes           String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  route           DailyCollectionRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  subLoan         SubLoan?             @relation(fields: [subLoanId], references: [id], onDelete: SetNull)
 
-  @@map("collection_route_items")
   @@index([routeId])
   @@index([subLoanId])
   @@index([orderIndex])
+  @@map("collection_route_items")
 }
 
 model RouteExpense {
-  id          String                @id @default(cuid())
+  id          String               @id @default(cuid())
   routeId     String
   category    ExpenseCategory
-  amount      Decimal               @db.Decimal(40, 2)
+  amount      Decimal              @db.Decimal(40, 2)
   description String
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  route       DailyCollectionRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  route       DailyCollectionRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
 
-  @@map("route_expenses")
   @@index([routeId])
   @@index([category])
+  @@map("route_expenses")
 }
 
 enum CollectionRouteStatus {
@@ -503,33 +506,100 @@ model CollectorWallet {
 }
 
 model CollectorWalletTransaction {
-  id          String                          @id @default(cuid())
-  walletId    String
-  userId      String
-  type        CollectorWalletTransactionType
-  amount      Decimal                         @db.Decimal(40, 2)
-  currency    Currency                        @default(ARS)
-  description String
-  balanceBefore Decimal                       @db.Decimal(40, 2) // Balance antes de la transacción
-  balanceAfter  Decimal                       @db.Decimal(40, 2) // Balance después de la transacción
-  subLoanId   String? // Referencia al subloan si es un cobro
-  createdAt   DateTime                        @default(now())
-  updatedAt   DateTime                        @updatedAt
-  wallet      CollectorWallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  user        User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String                         @id @default(cuid())
+  walletId      String
+  userId        String
+  type          CollectorWalletTransactionType
+  amount        Decimal                        @db.Decimal(40, 2)
+  currency      Currency                       @default(ARS)
+  description   String
+  balanceBefore Decimal                        @db.Decimal(40, 2) // Balance antes de la transacción
+  balanceAfter  Decimal                        @db.Decimal(40, 2) // Balance después de la transacción
+  subLoanId     String? // Referencia al subloan si es un cobro
+  createdAt     DateTime                       @default(now())
+  updatedAt     DateTime                       @updatedAt
+  wallet        CollectorWallet                @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user          User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("collector_wallet_transactions")
   @@index([walletId])
   @@index([userId])
   @@index([type])
   @@index([createdAt])
   @@index([subLoanId])
+  @@map("collector_wallet_transactions")
 }
 
 enum CollectorWalletTransactionType {
-  COLLECTION       // Cobro de subloan
-  WITHDRAWAL       // Retiro de fondos
-  ROUTE_EXPENSE    // Gasto de hoja de ruta
+  COLLECTION // Cobro de subloan
+  WITHDRAWAL // Retiro de fondos
+  ROUTE_EXPENSE // Gasto de hoja de ruta
   LOAN_DISBURSEMENT // Desembolso de préstamo (puede ser negativo)
-  CASH_ADJUSTMENT  // Ajuste de caja desde wallet del subadmin (para cuadreo de caja negativo)
+  CASH_ADJUSTMENT // Ajuste de caja desde wallet del subadmin (para cuadreo de caja negativo)
+  PAYMENT_RESET // Reseteo de pagos de un SubLoan
+}
+
+model Safe {
+  id           String            @id @default(cuid())
+  userId       String            @unique
+  balance      Decimal           @default(0) @db.Decimal(40, 2)
+  currency     Currency          @default(ARS)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions SafeTransaction[]
+
+  @@map("safes")
+}
+
+model SafeTransaction {
+  id            String              @id @default(cuid())
+  safeId        String
+  userId        String
+  type          SafeTransactionType
+  amount        Decimal             @db.Decimal(40, 2)
+  currency      Currency            @default(ARS)
+  description   String
+  balanceBefore Decimal             @db.Decimal(40, 2) // Balance antes de la transacción
+  balanceAfter  Decimal             @db.Decimal(40, 2) // Balance después de la transacción
+  relatedUserId String? // Para transferencias entre cajas fuertes
+  relatedSafeId String? // Para transferencias entre cajas fuertes
+  expenseId     String? // Referencia a la categoría de gasto (solo para tipo EXPENSE)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  safe          Safe                @relation(fields: [safeId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expense       SafeExpense?        @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  @@index([safeId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([expenseId])
+  @@map("safe_transactions")
+}
+
+model SafeExpense {
+  id           String            @id @default(cuid())
+  subadminId   String // ID del SUBADMIN que gestiona estos gastos
+  name         String // Nombre de la categoría de gasto (ej: "comida", "combustible")
+  description  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  subadmin     User              @relation("SubadminExpenses", fields: [subadminId], references: [id], onDelete: Cascade)
+  transactions SafeTransaction[] // Transacciones que usan esta categoría
+
+  @@unique([subadminId, name]) // Evitar duplicados por nombre para el mismo SUBADMIN
+  @@index([subadminId])
+  @@index([name])
+  @@map("safe_expenses")
+}
+
+enum SafeTransactionType {
+  DEPOSIT // Ingreso de fondos
+  WITHDRAWAL // Retiro de fondos
+  EXPENSE // Gasto personalizado
+  TRANSFER_TO_COLLECTOR // Transferencia a wallet de cobros
+  TRANSFER_FROM_COLLECTOR // Transferencia desde wallet de cobros (retiro)
+  TRANSFER_TO_SAFE // Transferencia a otra caja fuerte
+  TRANSFER_FROM_SAFE // Transferencia desde otra caja fuerte
 }

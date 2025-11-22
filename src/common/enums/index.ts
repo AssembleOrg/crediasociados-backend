@@ -10,3 +10,4 @@ export { WalletTransactionType } from './wallet-transaction-type.enum';
 export { ExpenseCategory } from './expense-category.enum';
 export { CollectionRouteStatus } from './collection-route-status.enum';
 export { CollectorWalletTransactionType } from './collector-wallet-transaction-type.enum';
+export { SafeTransactionType } from './safe-transaction-type.enum';

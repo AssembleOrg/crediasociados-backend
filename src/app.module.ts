@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -20,6 +20,8 @@ import { DailyClosureModule } from './daily-closure/daily-closure.module';
 import { AuditModule } from './audit/audit.module';
 import { CollectionRoutesModule } from './collection-routes/collection-routes.module';
 import { CollectorWalletModule } from './collector-wallet/collector-wallet.module';
+import { SafeModule } from './safe/safe.module';
+import { RabbitMQModule } from './rabbitmq/rabbitmq.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -55,6 +57,8 @@ import configuration from './config/configuration';
     AuditModule,
     CollectionRoutesModule,
     CollectorWalletModule,
+    SafeModule,
+    RabbitMQModule,
   ],
   controllers: [AppController],
   providers: [
@@ -75,6 +79,10 @@ import configuration from './config/configuration';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
   ],
 })

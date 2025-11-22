@@ -5,12 +5,10 @@ import {
   IsInt,
   IsPositive,
   IsDateString,
-  IsNotEmpty,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  LoanStatus,
   Currency,
   PaymentFrequency,
   PaymentDay,
@@ -29,7 +27,7 @@ export class CreateLoanDto {
 
   @ApiProperty({ example: 0.05 })
   @Type(() => Number)
-  @IsPositive()
+  @Min(0)
   baseInterestRate: number;
 
   @ApiProperty({ example: 0.05 })
@@ -54,7 +52,6 @@ export class CreateLoanDto {
   @ApiProperty({ example: 12 })
   @Type(() => Number)
   @IsInt()
-  @IsPositive()
   totalPayments: number;
 
   @ApiPropertyOptional({ example: '2024-12-31T23:59:59.000Z' })

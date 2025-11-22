@@ -74,4 +74,42 @@ export class ScheduledTasksController {
       await this.scheduledTasksService.runMarkOverdueSubLoansManually();
     return result;
   }
+
+  @Post('generate-daily-report')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Ejecutar manualmente la generación de reporte diario',
+    description:
+      'Genera el reporte diario en PDF y lo envía por email y guarda en bucket (solo para admins)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Reporte diario generado exitosamente',
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Prohibido - Solo administradores' })
+  async runGenerateDailyReportManually() {
+    const result =
+      await this.scheduledTasksService.runGenerateDailyReportManually();
+    return result;
+  }
+
+  @Post('generate-weekly-report')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Ejecutar manualmente la generación de reporte semanal',
+    description:
+      'Genera el reporte semanal en PDF (desde el lunes hasta el domingo de esa semana) y lo envía por email y guarda en bucket (solo para admins)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Reporte semanal generado exitosamente',
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Prohibido - Solo administradores' })
+  async runGenerateWeeklyReportManually() {
+    const result =
+      await this.scheduledTasksService.runGenerateWeeklyReportManually();
+    return result;
+  }
 }
