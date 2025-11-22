@@ -11,7 +11,6 @@ import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
 import { Prisma, UserRole } from '@prisma/client';
 import { LoanStatus, WalletTransactionType } from 'src/common/enums';
-import { WalletService } from '../wallet/wallet.service';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 
 @Injectable()
@@ -19,7 +18,6 @@ export class LoansService {
   constructor(
     private prisma: PrismaService,
     private subLoanGenerator: SubLoanGeneratorService,
-    private walletService: WalletService,
     private collectorWalletService: CollectorWalletService,
   ) {}
 
@@ -55,15 +53,15 @@ export class LoansService {
       );
     }
 
-    // 3. Obtener la cartera del manager (se permite saldo negativo)
-    const wallet = await this.walletService.getUserWallet(userId);
+    // 3. Obtener la collector wallet del manager (se permite saldo negativo)
+    const collectorWallet = await this.collectorWalletService.getOrCreateWallet(userId);
 
     // Se removió la validación de saldo suficiente - el sistema permite saldo negativo
 
-    // 4. Validar que la moneda del préstamo coincida con la de la cartera
-    if (wallet.currency !== createLoanDto.currency) {
+    // 4. Validar que la moneda del préstamo coincida con la de la collector wallet
+    if (collectorWallet.currency !== createLoanDto.currency) {
       throw new BadRequestException(
-        `La cartera usa ${wallet.currency}, no se puede prestar en ${createLoanDto.currency}`,
+        `La wallet de cobros usa ${collectorWallet.currency}, no se puede prestar en ${createLoanDto.currency}`,
       );
     }
 
@@ -112,15 +110,19 @@ export class LoansService {
       }
     }
 
-    // 6. Usar transacción para crear el loan, subloans y debitar de cartera
+    // 6. Calcular el monto total con intereses
+    const originalAmount = Number(createLoanDto.amount);
+    const totalAmount = originalAmount * (1 + Number(createLoanDto.baseInterestRate));
+
+    // 7. Usar transacción para crear el loan, subloans y debitar de cartera
     const result = await this.prisma.$transaction(async (prisma) => {
       // Crear el préstamo
       const loan = await prisma.loan.create({
         data: {
           clientId: createLoanDto.clientId,
           managerId: userId, // NUEVO: Agregar manager ID
-          amount: createLoanDto.amount,
-          originalAmount: createLoanDto.amount,
+          amount: totalAmount, // Monto total con intereses
+          originalAmount: originalAmount, // Monto original sin intereses
           currency: createLoanDto.currency || 'ARS',
           paymentFrequency: createLoanDto.paymentFrequency,
           paymentDay: createLoanDto.paymentDay,
@@ -840,8 +842,8 @@ export class LoansService {
     }
 
     // Calcular cuánto dinero devolver a la wallet
-    // Total del préstamo - pagos ya recibidos (debería ser 0 en este caso)
-    const totalPrestamo = Number(loan.amount);
+    // Total del préstamo original (sin intereses) - pagos ya recibidos (debería ser 0 en este caso)
+    const totalPrestamo = Number(loan.originalAmount); // Monto prestado sin intereses
     const totalPagado = loan.subLoans.reduce((sum, subloan) => {
       const pagosSubloan = subloan.payments.reduce(
         (sumPayments, payment) => sumPayments + Number(payment.amount),
@@ -926,7 +928,7 @@ export class LoansService {
       deletedLoan: {
         id: loan.id,
         loanTrack: loan.loanTrack,
-        amount: Number(loan.amount),
+        amount: Number(loan.originalAmount), // Monto prestado sin intereses
         clientId: loan.clientId,
         clientName: loan.client.fullName,
         clientDni: loan.client.dni,
@@ -1013,6 +1015,7 @@ export class LoansService {
         id: true,
         amount: true,
         createdAt: true,
+        originalAmount: true,
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -1037,7 +1040,7 @@ export class LoansService {
 
       const existing = statsMap.get(periodKey) || { count: 0, amount: 0 };
       existing.count += 1;
-      existing.amount += Number(loan.amount);
+      existing.amount += Number(loan.originalAmount); // Monto prestado sin intereses
       statsMap.set(periodKey, existing);
     }
 
@@ -1051,7 +1054,7 @@ export class LoansService {
       .sort((a, b) => a.period.localeCompare(b.period));
 
     const totalAmount = loans.reduce(
-      (sum, loan) => sum + Number(loan.amount),
+      (sum, loan) => sum + Number(loan.originalAmount), // Monto prestado sin intereses
       0,
     );
 
@@ -1130,7 +1133,7 @@ export class LoansService {
       );
 
       return {
-        montoTotalPrestado: Number(loan.amount),
+        montoTotalPrestado: Number(loan.originalAmount), // Monto prestado sin intereses
         montoTotalADevolver,
         nombrecliente: loan.client.fullName,
       };

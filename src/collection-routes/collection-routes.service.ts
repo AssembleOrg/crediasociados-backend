@@ -904,12 +904,12 @@ export class CollectionRoutesService {
     // Crear gasto y registrar en collector wallet en una transacción
     const result = await this.prisma.$transaction(async (tx) => {
       const expense = await tx.routeExpense.create({
-        data: {
-          routeId,
-          category: createExpenseDto.category as any,
-          amount: new Decimal(createExpenseDto.amount),
-          description: createExpenseDto.description,
-        },
+      data: {
+        routeId,
+        category: createExpenseDto.category as any,
+        amount: new Decimal(createExpenseDto.amount),
+        description: createExpenseDto.description,
+      },
       });
 
       // Registrar el gasto en la collector wallet del manager

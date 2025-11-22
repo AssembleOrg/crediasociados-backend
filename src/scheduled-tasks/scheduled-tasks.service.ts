@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SubLoansService } from '../sub-loans/sub-loans.service';
 import { CollectionRoutesService } from '../collection-routes/collection-routes.service';
+import { DailyReportsService } from '../daily-reports/daily-reports.service';
 
 @Injectable()
 export class ScheduledTasksService {
@@ -10,6 +11,7 @@ export class ScheduledTasksService {
   constructor(
     private readonly subLoansService: SubLoansService,
     private readonly collectionRoutesService: CollectionRoutesService,
+    private readonly dailyReportsService: DailyReportsService,
   ) {}
 
   /**
@@ -127,5 +129,100 @@ export class ScheduledTasksService {
       'Ejecutando manualmente la tarea de marcado de subloans vencidos',
     );
     return this.markOverdueSubLoans();
+  }
+
+  /**
+   * Tarea programada que se ejecuta a las 03:00 AM todos los días (horario argentino)
+   * Genera el reporte diario en PDF y lo envía por email y guarda en bucket
+   */
+  @Cron('0 3 * * *', {
+    name: 'generate-daily-report',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
+  async generateDailyReport() {
+    try {
+      this.logger.log(
+        'Iniciando tarea programada: generar reporte diario',
+      );
+
+      const result = await this.dailyReportsService.generateDailyReport();
+
+      if (result.success) {
+        this.logger.log(
+          `Tarea completada: Reporte diario generado exitosamente - ${result.filename}`,
+        );
+      } else {
+        this.logger.error(
+          `Error al generar reporte diario: ${result.error}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        'Error en tarea programada de generación de reporte diario:',
+        error,
+      );
+      // No lanzamos el error para que no rompa la app
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Método para ejecutar manualmente la generación de reporte diario (para testing)
+   */
+  async runGenerateDailyReportManually(reportDate?: Date) {
+    this.logger.log(
+      'Ejecutando manualmente la tarea de generación de reporte diario',
+    );
+    return this.dailyReportsService.generateDailyReport(reportDate);
+  }
+
+  /**
+   * Tarea programada que se ejecuta los domingos a las 23:50 (horario argentino)
+   * Genera el reporte semanal en PDF (desde el lunes hasta el domingo de esa semana)
+   * y lo envía por email y guarda en bucket
+   */
+  @Cron('50 23 * * 0', {
+    name: 'generate-weekly-report',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
+  async generateWeeklyReport() {
+    try {
+      this.logger.log(
+        'Iniciando tarea programada: generar reporte semanal',
+      );
+
+      const result = await this.dailyReportsService.generateWeeklyReport();
+
+      if (result.success) {
+        this.logger.log(
+          `Tarea completada: Reporte semanal generado exitosamente - ${result.filename}`,
+        );
+      } else {
+        this.logger.error(
+          `Error al generar reporte semanal: ${result.error}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        'Error en tarea programada de generación de reporte semanal:',
+        error,
+      );
+      // No lanzamos el error para que no rompa la app
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Método para ejecutar manualmente la generación de reporte semanal (para testing)
+   */
+  async runGenerateWeeklyReportManually(reportDate?: Date) {
+    this.logger.log(
+      'Ejecutando manualmente la tarea de generación de reporte semanal',
+    );
+    return this.dailyReportsService.generateWeeklyReport(reportDate);
   }
 }

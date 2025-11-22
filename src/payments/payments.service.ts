@@ -263,7 +263,7 @@ export class PaymentsService {
       await this.collectorWalletService.recordCollection({
         userId: managerId, // Usar el manager del cliente, no quien registra el pago
         amount,
-        description: `Cobro préstamo ${subLoan.loan.loanTrack} - Cuota #${subLoan.paymentNumber}`,
+        description: `Cobro préstamo ${subLoan.loan.client.fullName} - Cuota #${subLoan.paymentNumber}`,
         subLoanId,
         transaction: tx,
       });

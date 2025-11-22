@@ -140,7 +140,7 @@ export class AuthService {
     }
 
     // 3. Hash de la nueva contraseña
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // 4. Actualizar la contraseña
     await this.prisma.user.update({
