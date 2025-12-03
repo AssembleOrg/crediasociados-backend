@@ -1374,6 +1374,7 @@ export class CollectorWalletService {
     // 1. COBRADO del día (de collector wallet)
     const collectorWallet = await this.getOrCreateWallet(userId);
     
+    // Obtener cobros del día
     const collectionsToday = await this.prisma.collectorWalletTransaction.findMany({
       where: {
         walletId: collectorWallet.id,
@@ -1385,10 +1386,31 @@ export class CollectorWalletService {
       },
     });
 
-    const totalCollected = collectionsToday.reduce(
+    // Obtener reseteos del día (PAYMENT_RESET tienen amount negativo)
+    const resetsToday = await this.prisma.collectorWalletTransaction.findMany({
+      where: {
+        walletId: collectorWallet.id,
+        type: CollectorWalletTransactionType.PAYMENT_RESET,
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+      },
+    });
+
+    // Calcular totales: cobros positivos + reseteos (que son negativos)
+    const totalCollections = collectionsToday.reduce(
       (sum, t) => sum + Number(t.amount),
       0,
     );
+    
+    const totalResets = resetsToday.reduce(
+      (sum, t) => sum + Number(t.amount), // amount ya es negativo
+      0,
+    );
+    
+    // Total neto de cobros = cobros - reseteos
+    const totalCollected = totalCollections + totalResets;
 
     // 2. PRESTADO del día (loans creados)
     const loansCreatedToday = await this.prisma.loan.findMany({
@@ -1511,11 +1533,23 @@ export class CollectorWalletService {
         role: user.role,
       },
       collected: {
-        total: totalCollected,
+        total: totalCollected, // Neto (cobros - reseteos)
+        grossTotal: totalCollections, // Bruto (solo cobros)
         count: collectionsToday.length,
         transactions: collectionsToday.map((t) => ({
           id: t.id,
           amount: Number(t.amount),
+          description: t.description,
+          subLoanId: t.subLoanId,
+          createdAt: t.createdAt,
+        })),
+      },
+      resets: {
+        total: Math.abs(totalResets), // Mostrar como positivo para claridad
+        count: resetsToday.length,
+        transactions: resetsToday.map((t) => ({
+          id: t.id,
+          amount: Number(t.amount), // Negativo
           description: t.description,
           subLoanId: t.subLoanId,
           createdAt: t.createdAt,
@@ -1540,7 +1574,9 @@ export class CollectorWalletService {
         detail: expensesDetail,
       },
       summary: {
-        totalCollected,
+        totalCollected, // Neto
+        grossCollected: totalCollections, // Bruto
+        totalResets: Math.abs(totalResets), // Reseteos como positivo
         totalLoaned,
         totalExpenses,
         netBalance,
