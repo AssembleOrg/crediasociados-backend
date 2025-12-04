@@ -1241,11 +1241,14 @@ export class CollectorWalletService {
     // para mantener consistencia con el balance de la wallet
     const neto = totalAmountCollected - totalExpenses - totalLoanedFromTransactions - totalWithdrawals + totalCashAdjustments;
 
-    // Construir respuesta
+    // Construir respuesta - Formatear fechas del período en zona horaria Buenos Aires para claridad
+    const periodStartDt = DateUtil.fromJSDate(periodStart);
+    const periodEndDt = DateUtil.fromJSDate(periodEnd);
+    
     return {
       period: {
-        startDate: periodStart.toISOString(),
-        endDate: periodEnd.toISOString(),
+        startDate: periodStartDt.toISO(), // Mostrará en formato ISO con offset GMT-3
+        endDate: periodEndDt.toISO(), // Mostrará en formato ISO con offset GMT-3
       },
       collector: {
         userId: user?.email || userId,

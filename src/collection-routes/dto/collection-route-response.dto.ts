@@ -24,6 +24,9 @@ export class CollectionRouteResponseDto {
   @ApiProperty({ example: 45000.0 })
   netAmount: number;
 
+  @ApiProperty({ example: 0.0, description: 'Total de préstamos creados el mismo día de la ruta' })
+  totalLoaned: number;
+
   @ApiPropertyOptional({ example: 'Ruta completada sin inconvenientes' })
   notes?: string;
 
