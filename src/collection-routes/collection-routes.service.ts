@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UserRole } from '@prisma/client';
+import { UserRole, Prisma } from '@prisma/client';
 import {
   CloseRouteDto,
   UpdateRouteOrderDto,
@@ -537,35 +537,144 @@ export class CollectionRoutesService {
       where.status = query.status;
     }
 
-    // Filtros de fecha (comparar solo por DÍA, no por hora)
+    // Filtros de fecha
+    // IMPORTANTE: routeDate se guarda como inicio del día en Buenos Aires (00:00:00 GMT-3 = 03:00:00 UTC)
+    // Cuando se busca por fecha, comparamos desde el inicio del día hasta el final del día en hora argentina
     if (query.dateFrom || query.dateTo) {
       where.routeDate = {};
       if (query.dateFrom) {
-        // Parsear fecha en zona horaria Argentina y normalizar al inicio del día
-        const dateFrom = DateUtil.fromPrismaDate(DateUtil.parseToDate(query.dateFrom))
-          .startOf('day')
-          .toJSDate();
+        // Extraer solo la fecha (YYYY-MM-DD) si viene con hora
+        const dateFromStr = query.dateFrom.includes('T') 
+          ? query.dateFrom.split('T')[0]
+          : query.dateFrom;
+        
+        // Crear inicio del día en Buenos Aires (00:00:00 GMT-3 = 03:00:00 UTC)
+        const [year, month, day] = dateFromStr.split('-').map(Number);
+        const dateFromDT = DateUtil.fromObject({
+          year,
+          month,
+          day,
+          hour: 0,
+          minute: 0,
+          second: 0,
+          millisecond: 0,
+        });
+        const dateFrom = dateFromDT.toJSDate();
         where.routeDate.gte = dateFrom;
         
-        // Si solo se envía dateFrom (sin dateTo), buscar solo ese día específico
+        // Si solo se envía dateFrom (sin dateTo), buscar hasta el final del día (23:59:59.999) hora argentina
         if (!query.dateTo) {
-          const dateFromEnd = DateUtil.fromPrismaDate(DateUtil.parseToDate(query.dateFrom))
-            .startOf('day')
-            .plus({ days: 1 })
-            .toJSDate();
-          where.routeDate.lt = dateFromEnd;
+          // Fin del día en Buenos Aires (23:59:59.999) convertido a UTC
+          // Sumar 1 día al inicio y restar 1 milisegundo para obtener el final del día
+          const dateFromEnd = DateUtil.fromObject({
+            year,
+            month,
+            day,
+            hour: 23,
+            minute: 59,
+            second: 59,
+            millisecond: 999,
+          }).toJSDate();
+          where.routeDate.lte = dateFromEnd;
+          
+          // Log temporal para debugging
+          this.logger.debug(
+            `Buscando rutas desde ${dateFrom.toISOString()} hasta ${dateFromEnd.toISOString()}`,
+          );
         }
       }
       if (query.dateTo) {
-        // Parsear fecha en zona horaria Argentina y normalizar al inicio del día
-        // Luego sumar 1 día para incluir todo el día dateTo
-        const dateTo = DateUtil.fromPrismaDate(DateUtil.parseToDate(query.dateTo))
-          .startOf('day')
-          .plus({ days: 1 })
-          .toJSDate();
-        where.routeDate.lt = dateTo; // Usar 'lt' (less than) en vez de 'lte'
+        // Extraer solo la fecha (YYYY-MM-DD) si viene con hora
+        const dateToStr = query.dateTo.includes('T') 
+          ? query.dateTo.split('T')[0]
+          : query.dateTo;
+        
+        // Crear fin del día en Buenos Aires (23:59:59.999 GMT-3)
+        const [year, month, day] = dateToStr.split('-').map(Number);
+        const dateToDT = DateUtil.fromObject({
+          year,
+          month,
+          day,
+          hour: 23,
+          minute: 59,
+          second: 59,
+          millisecond: 999,
+        });
+        const dateTo = dateToDT.toJSDate();
+        where.routeDate.lte = dateTo;
       }
     }
+
+    // Log temporal para debugging
+    this.logger.debug(
+      `Buscando rutas con filtros: ${JSON.stringify(where, null, 2)}`,
+    );
+
+    // Verificar si hay rutas en la base de datos para este manager
+    const allRoutes = await this.prisma.dailyCollectionRoute.findMany({
+      where: {
+        managerId: where.managerId,
+      },
+      select: {
+        id: true,
+        routeDate: true,
+        status: true,
+        managerId: true,
+      },
+      orderBy: {
+        routeDate: 'desc',
+      },
+      take: 5, // Solo las últimas 5 para no saturar el log
+    });
+    
+    if (allRoutes.length > 0) {
+      this.logger.debug(
+        `Rutas encontradas en BD para este manager: ${JSON.stringify(
+          allRoutes.map((r) => ({
+            id: r.id,
+            routeDate: r.routeDate.toISOString(),
+            status: r.status,
+          })),
+        )}`,
+      );
+    } else {
+      this.logger.debug('No se encontró ninguna ruta para este manager');
+    }
+    
+    // Verificar específicamente si hay una ruta que coincida con el filtro de fecha
+    if (where.routeDate) {
+      const matchingRoute = await this.prisma.dailyCollectionRoute.findFirst({
+        where: {
+          managerId: where.managerId,
+          routeDate: where.routeDate,
+        },
+        select: {
+          id: true,
+          routeDate: true,
+          status: true,
+        },
+      });
+      
+      if (matchingRoute) {
+        this.logger.debug(
+          `Ruta que coincide con filtro de fecha: ${JSON.stringify({
+            id: matchingRoute.id,
+            routeDate: matchingRoute.routeDate.toISOString(),
+            status: matchingRoute.status,
+          })}`,
+        );
+      } else {
+        this.logger.debug(
+          `No se encontró ninguna ruta que coincida con el filtro de fecha: ${JSON.stringify(where.routeDate)}`,
+        );
+      }
+    }
+
+    // Log adicional: contar cuántas rutas hay con estos filtros
+    const routesCount = await this.prisma.dailyCollectionRoute.count({
+      where,
+    });
+    this.logger.debug(`Total de rutas encontradas con filtros: ${routesCount}`);
 
     const routes = await this.prisma.dailyCollectionRoute.findMany({
       where,
