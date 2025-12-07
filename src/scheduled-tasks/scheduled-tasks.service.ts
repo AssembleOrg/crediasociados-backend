@@ -133,40 +133,16 @@ export class ScheduledTasksService {
 
   /**
    * Tarea programada que se ejecuta a las 03:00 AM todos los días (horario argentino)
-   * Genera el reporte diario en PDF y lo envía por email y guarda en bucket
+   * NOTA: La generación automática de reportes y envío por email ha sido deshabilitada.
+   * Los reportes ahora se generan bajo demanda a través del endpoint de la API.
    */
-  @Cron('0 3 * * *', {
-    name: 'generate-daily-report',
-    timeZone: 'America/Argentina/Buenos_Aires',
-  })
-  async generateDailyReport() {
-    try {
-      this.logger.log(
-        'Iniciando tarea programada: generar reporte diario',
-      );
-
-      const result = await this.dailyReportsService.generateDailyReport();
-
-      if (result.success) {
-        this.logger.log(
-          `Tarea completada: Reporte diario generado exitosamente - ${result.filename}`,
-        );
-      } else {
-        this.logger.error(
-          `Error al generar reporte diario: ${result.error}`,
-        );
-      }
-
-      return result;
-    } catch (error) {
-      this.logger.error(
-        'Error en tarea programada de generación de reporte diario:',
-        error,
-      );
-      // No lanzamos el error para que no rompa la app
-      return { success: false, error: error.message };
-    }
-  }
+  // @Cron('0 3 * * *', {
+  //   name: 'generate-daily-report',
+  //   timeZone: 'America/Argentina/Buenos_Aires',
+  // })
+  // async generateDailyReport() {
+  //   // Deshabilitado - Los reportes ahora se generan bajo demanda
+  // }
 
   /**
    * Método para ejecutar manualmente la generación de reporte diario (para testing)
@@ -180,41 +156,16 @@ export class ScheduledTasksService {
 
   /**
    * Tarea programada que se ejecuta los domingos a las 23:50 (horario argentino)
-   * Genera el reporte semanal en PDF (desde el lunes hasta el domingo de esa semana)
-   * y lo envía por email y guarda en bucket
+   * NOTA: La generación automática de reportes y envío por email ha sido deshabilitada.
+   * Los reportes ahora se generan bajo demanda a través del endpoint de la API.
    */
-  @Cron('50 23 * * 0', {
-    name: 'generate-weekly-report',
-    timeZone: 'America/Argentina/Buenos_Aires',
-  })
-  async generateWeeklyReport() {
-    try {
-      this.logger.log(
-        'Iniciando tarea programada: generar reporte semanal',
-      );
-
-      const result = await this.dailyReportsService.generateWeeklyReport();
-
-      if (result.success) {
-        this.logger.log(
-          `Tarea completada: Reporte semanal generado exitosamente - ${result.filename}`,
-        );
-      } else {
-        this.logger.error(
-          `Error al generar reporte semanal: ${result.error}`,
-        );
-      }
-
-      return result;
-    } catch (error) {
-      this.logger.error(
-        'Error en tarea programada de generación de reporte semanal:',
-        error,
-      );
-      // No lanzamos el error para que no rompa la app
-      return { success: false, error: error.message };
-    }
-  }
+  // @Cron('50 23 * * 0', {
+  //   name: 'generate-weekly-report',
+  //   timeZone: 'America/Argentina/Buenos_Aires',
+  // })
+  // async generateWeeklyReport() {
+  //   // Deshabilitado - Los reportes ahora se generan bajo demanda
+  // }
 
   /**
    * Método para ejecutar manualmente la generación de reporte semanal (para testing)

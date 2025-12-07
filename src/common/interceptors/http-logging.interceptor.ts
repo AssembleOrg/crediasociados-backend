@@ -52,7 +52,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
             requestBody,
             queryParams,
             headers,
-            responseBody: this.shouldLogResponseBody(endpoint)
+            responseBody: this.shouldLogResponseBody(endpoint) && !Buffer.isBuffer(data)
               ? this.truncateIfNeeded(data)
               : undefined,
           });
@@ -138,15 +138,25 @@ export class HttpLoggingInterceptor implements NestInterceptor {
   }
 
   private truncateIfNeeded(data: any, maxLength: number = 5000): any {
-    const stringified = JSON.stringify(data);
-    if (stringified.length > maxLength) {
-      return {
-        _truncated: true,
-        _originalLength: stringified.length,
-        _preview: stringified.substring(0, maxLength) + '...',
-      };
+    // Si es un Buffer o tiene estructura circular, no intentar serializar
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+      return { _type: 'binary', _size: data.length };
     }
-    return data;
+    
+    try {
+      const stringified = JSON.stringify(data);
+      if (stringified.length > maxLength) {
+        return {
+          _truncated: true,
+          _originalLength: stringified.length,
+          _preview: stringified.substring(0, maxLength) + '...',
+        };
+      }
+      return data;
+    } catch (error) {
+      // Si hay error de serialización (estructura circular), devolver un resumen
+      return { _type: 'non-serializable', _error: 'Circular structure or non-serializable object' };
+    }
   }
 }
 
