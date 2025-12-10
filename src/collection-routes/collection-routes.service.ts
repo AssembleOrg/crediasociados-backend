@@ -480,7 +480,7 @@ export class CollectionRoutesService {
       );
     }
 
-    return this.transformRouteToDto(route);
+    return await this.transformRouteToDto(route);
   }
 
   /**
@@ -716,7 +716,12 @@ export class CollectionRoutesService {
       },
     });
 
-    return routes.map((route) => this.transformRouteToDto(route));
+    // Transformar rutas a DTO (incluye búsqueda de préstamos del día)
+    const routesWithLoans = await Promise.all(
+      routes.map((route) => this.transformRouteToDto(route)),
+    );
+
+    return routesWithLoans;
   }
 
   /**
@@ -988,7 +993,7 @@ export class CollectionRoutesService {
       }
     }
 
-    return this.transformRouteToDto(route);
+    return await this.transformRouteToDto(route);
   }
 
   /**
@@ -1163,9 +1168,46 @@ export class CollectionRoutesService {
   }
 
   /**
+   * Helper: Buscar préstamos creados el mismo día que la ruta
+   */
+  private async getLoansOfDay(
+    managerId: string,
+    routeDate: Date,
+  ): Promise<number> {
+    // Obtener inicio y fin del día de la ruta en hora argentina
+    const routeDateDT = DateUtil.fromJSDate(routeDate);
+    const dayStart = routeDateDT.startOf('day').toJSDate();
+    const dayEnd = routeDateDT.endOf('day').toJSDate();
+
+    // Buscar préstamos creados ese día por el manager
+    const loansOfDay = await this.prisma.loan.findMany({
+      where: {
+        managerId,
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        deletedAt: null,
+      },
+      select: {
+        originalAmount: true,
+      },
+    });
+
+    // Calcular total de préstamos del día
+    return loansOfDay.reduce(
+      (sum, loan) => sum + Number(loan.originalAmount),
+      0,
+    );
+  }
+
+  /**
    * Helper: Transformar ruta de Prisma a DTO
    */
-  private transformRouteToDto(route: any): CollectionRouteResponseDto {
+  private async transformRouteToDto(route: any): Promise<CollectionRouteResponseDto> {
+    // Buscar préstamos del día
+    const totalLoaned = await this.getLoansOfDay(route.managerId, route.routeDate);
+    
     // Si la ruta está ACTIVE, calcular totales en tiempo real
     let totalCollected = Number(route.totalCollected);
     let totalExpenses = Number(route.totalExpenses);
@@ -1183,8 +1225,11 @@ export class CollectionRoutesService {
         return sum + Number(expense.amount);
       }, 0);
 
-      // Calcular neto
-      netAmount = totalCollected - totalExpenses;
+      // Calcular neto: cobrado - gastos - préstamos del día
+      netAmount = totalCollected - totalExpenses - totalLoaned;
+    } else {
+      // Para rutas cerradas, restar préstamos del día del netAmount almacenado
+      netAmount = netAmount - totalLoaned;
     }
 
     return {
@@ -1195,6 +1240,7 @@ export class CollectionRoutesService {
       totalCollected,
       totalExpenses,
       netAmount,
+      totalLoaned,
       notes: route.notes,
       closedAt: route.closedAt,
       createdAt: route.createdAt,
