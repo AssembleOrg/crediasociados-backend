@@ -261,6 +261,7 @@ export class ClientsService {
             status: true,
             loanTrack: true,
             createdAt: true,
+            description: true,
             _count: {
               select: {
                 subLoans: true,

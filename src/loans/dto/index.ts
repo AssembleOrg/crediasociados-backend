@@ -4,3 +4,4 @@ export * from './create-loan-response.dto';
 export * from './sub-loan-response.dto';
 export * from './loan-list-response.dto';
 export * from './today-loans.dto';
+export * from './update-loan-description.dto';

@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Body,
   Param,
   Query,
@@ -26,6 +27,7 @@ import {
   LoanListResponseDto,
   TodayLoansDto,
   TodayLoanItemDto,
+  UpdateLoanDescriptionDto,
 } from './dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -431,6 +433,22 @@ export class LoansController {
   @ApiResponse({ status: 401, description: 'No autorizado' })
   async getTodayLoans(@Request() req): Promise<TodayLoansDto> {
     return this.loansService.getTodayLoans(req.user.id, req.user.role);
+  }
+
+  @Patch(':id/description')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Actualizar descripción/notas de un préstamo' })
+  @ApiResponse({ status: 200, description: 'Descripción actualizada exitosamente' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
+  async updateDescription(
+    @Param('id') id: string,
+    @Body() dto: UpdateLoanDescriptionDto,
+    @Request() req,
+  ) {
+    return this.loansService.updateDescription(id, req.user.id, dto.description || '');
   }
 
   @Get(':id')

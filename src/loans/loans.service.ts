@@ -445,6 +445,37 @@ export class LoansService {
     return loan;
   }
 
+  async updateDescription(loanId: string, userId: string, description: string) {
+    // Verificar que el préstamo existe y pertenece al usuario
+    const loan = await this.prisma.loan.findFirst({
+      where: {
+        id: loanId,
+        deletedAt: null,
+        client: {
+          managers: {
+            some: {
+              userId: userId,
+              deletedAt: null,
+            },
+          },
+        },
+      },
+    });
+
+    if (!loan) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    return this.prisma.loan.update({
+      where: { id: loanId },
+      data: { description },
+      select: {
+        id: true,
+        description: true,
+      },
+    });
+  }
+
   async getAllLoansWithFilters(
     userId: string,
     userRole: UserRole,
