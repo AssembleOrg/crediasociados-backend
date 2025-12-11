@@ -912,6 +912,177 @@ export class CollectorWalletService {
   }
 
   /**
+   * Obtener el último retiro realizado de la wallet de cobros
+   * @param userId ID del usuario que hace la petición
+   * @param userRole Rol del usuario
+   * @param managerId ID del manager (opcional). Para SUBADMIN: permite especificar un manager. Para MANAGER: debe ser su propio ID.
+   */
+  async getLastWithdrawal(
+    userId: string,
+    userRole: UserRole,
+    managerId?: string,
+  ): Promise<any> {
+    let targetUserId = userId;
+
+    // Si se proporciona un managerId, validar permisos
+    if (managerId) {
+      const manager = await this.prisma.user.findUnique({
+        where: { id: managerId },
+      });
+
+      if (!manager) {
+        throw new NotFoundException('Manager no encontrado');
+      }
+
+      if (manager.role !== UserRole.MANAGER) {
+        throw new BadRequestException('El usuario especificado no es un MANAGER');
+      }
+
+      // Validar permisos según el rol
+      if (userRole === UserRole.MANAGER) {
+        // MANAGER solo puede ver su propio último retiro
+        if (managerId !== userId) {
+          throw new ForbiddenException(
+            'Solo puedes ver tu propio último retiro',
+          );
+        }
+        targetUserId = managerId;
+      } else if (userRole === UserRole.SUBADMIN) {
+        // SUBADMIN solo puede ver managers que él creó
+        if (manager.createdById !== userId) {
+          throw new ForbiddenException(
+            'Solo puedes ver el último retiro de managers que tú creaste',
+          );
+        }
+        targetUserId = managerId;
+      }
+      // ADMIN y SUPERADMIN pueden ver cualquier manager sin restricciones
+      else if (
+        userRole === UserRole.ADMIN ||
+        userRole === UserRole.SUPERADMIN
+      ) {
+        targetUserId = managerId;
+      }
+    } else {
+      // Si no se proporciona managerId
+      if (userRole === UserRole.SUBADMIN) {
+        // SUBADMIN: obtener el último retiro de cualquiera de sus managers
+        const managers = await this.prisma.user.findMany({
+          where: {
+            createdById: userId,
+            role: UserRole.MANAGER,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+
+        const managerIds = managers.map((m) => m.id);
+        if (managerIds.length === 0) {
+          return null;
+        }
+
+        // Buscar wallets de los managers
+        const wallets = await this.prisma.collectorWallet.findMany({
+          where: { userId: { in: managerIds } },
+          select: { id: true },
+        });
+
+        const walletIds = wallets.map((w) => w.id);
+
+        // Obtener el último retiro de cualquier manager
+        const lastWithdrawal =
+          await this.prisma.collectorWalletTransaction.findFirst({
+            where: {
+              walletId: { in: walletIds },
+              type: CollectorWalletTransactionType.WITHDRAWAL,
+            },
+            orderBy: { createdAt: 'desc' },
+            include: {
+              wallet: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      fullName: true,
+                      email: true,
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+        if (!lastWithdrawal) {
+          return null;
+        }
+
+        return {
+          id: lastWithdrawal.id,
+          amount: Number(lastWithdrawal.amount),
+          currency: lastWithdrawal.currency,
+          description: lastWithdrawal.description,
+          balanceBefore: Number(lastWithdrawal.balanceBefore),
+          balanceAfter: Number(lastWithdrawal.balanceAfter),
+          createdAt: lastWithdrawal.createdAt,
+          manager: lastWithdrawal.wallet.user,
+        };
+      }
+      // Para MANAGER, ADMIN, SUPERADMIN sin managerId: usar su propio userId
+    }
+
+    // Buscar el último retiro del targetUserId
+    const wallet = await this.prisma.collectorWallet.findUnique({
+      where: { userId: targetUserId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!wallet) {
+      return null;
+    }
+
+    const lastWithdrawal = await this.prisma.collectorWalletTransaction.findFirst({
+      where: {
+        walletId: wallet.id,
+        type: CollectorWalletTransactionType.WITHDRAWAL,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!lastWithdrawal) {
+      return null;
+    }
+
+    const result: any = {
+      id: lastWithdrawal.id,
+      amount: Number(lastWithdrawal.amount),
+      currency: lastWithdrawal.currency,
+      description: lastWithdrawal.description,
+      balanceBefore: Number(lastWithdrawal.balanceBefore),
+      balanceAfter: Number(lastWithdrawal.balanceAfter),
+      createdAt: lastWithdrawal.createdAt,
+    };
+
+    // Si es SUBADMIN, ADMIN o SUPERADMIN, incluir info del manager
+    if (
+      userRole === UserRole.SUBADMIN ||
+      userRole === UserRole.ADMIN ||
+      userRole === UserRole.SUPERADMIN
+    ) {
+      result.manager = wallet.user;
+    }
+
+    return result;
+  }
+
+  /**
    * Obtener resumen de la wallet (balance + estadísticas)
    */
   async getSummary(userId: string): Promise<any> {

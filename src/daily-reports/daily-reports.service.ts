@@ -1792,33 +1792,55 @@ export class DailyReportsService {
         },
       });
 
-      // Obtener transacciones de safe del subadmin en el período
-      const safeTransactions = await this.prisma.safeTransaction.findMany({
+      // Obtener transacciones de safe de todos los managers del subadmin en el período
+      // Primero obtener los safes de los managers
+      const managerSafes = await this.prisma.safe.findMany({
         where: {
-          userId: subadminId,
-          createdAt: {
-            gte: startDateJS,
-            lte: endDateJS,
-          },
+          userId: { in: managerIds },
         },
-        include: {
-          user: {
-            select: {
-              fullName: true,
-              email: true,
-            },
-          },
-          expense: {
-            select: {
-              name: true,
-              description: true,
-            },
-          },
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
+        select: { id: true },
       });
+
+      const safeIds = managerSafes.map((s) => s.id);
+
+      const safeTransactions = safeIds.length > 0
+        ? await this.prisma.safeTransaction.findMany({
+            where: {
+              safeId: { in: safeIds },
+              createdAt: {
+                gte: startDateJS,
+                lte: endDateJS,
+              },
+            },
+            include: {
+              safe: {
+                include: {
+                  user: {
+                    select: {
+                      fullName: true,
+                      email: true,
+                    },
+                  },
+                },
+              },
+              user: {
+                select: {
+                  fullName: true,
+                  email: true,
+                },
+              },
+              expense: {
+                select: {
+                  name: true,
+                  description: true,
+                },
+              },
+            },
+            orderBy: {
+              createdAt: 'asc',
+            },
+          })
+        : [];
 
       // Agrupar transacciones por manager
       const transactionsByManager = new Map<string, any[]>();
@@ -1838,6 +1860,19 @@ export class DailyReportsService {
         }
       });
 
+      // Agrupar transacciones de safe por manager
+      const safeTransactionsByManager = new Map<string, any[]>();
+      managers.forEach((manager) => {
+        safeTransactionsByManager.set(manager.id, []);
+      });
+
+      safeTransactions.forEach((tx) => {
+        const managerId = tx.safe.userId;
+        if (safeTransactionsByManager.has(managerId)) {
+          safeTransactionsByManager.get(managerId)!.push(tx);
+        }
+      });
+
       // Generar PDF
       const { pdfBase64, filename } = await this.generateSubadminManagersPDF({
         subadminId,
@@ -1846,7 +1881,7 @@ export class DailyReportsService {
         managers,
         transactionsByManager,
         loansDisbursed,
-        safeTransactions,
+        safeTransactionsByManager,
       });
 
       return {
@@ -1895,7 +1930,7 @@ export class DailyReportsService {
     managers: Array<{ id: string; fullName: string; email: string }>;
     transactionsByManager: Map<string, any[]>;
     loansDisbursed: any[];
-    safeTransactions: any[];
+    safeTransactionsByManager: Map<string, any[]>;
   }): Promise<{ pdfBase64: string; filename: string }> {
     return new Promise((resolve, reject) => {
       try {
@@ -2024,27 +2059,29 @@ export class DailyReportsService {
         let totalSafeTransfersOut = 0;
         let totalSafeTransfersIn = 0;
 
-        data.safeTransactions.forEach((tx) => {
-          const amount = Number(tx.amount);
-          switch (tx.type) {
-            case 'DEPOSIT':
-              totalSafeDeposits += amount;
-              break;
-            case 'WITHDRAWAL':
-              totalSafeWithdrawals += Math.abs(amount);
-              break;
-            case 'EXPENSE':
-              totalSafeExpenses += Math.abs(amount);
-              break;
-            case 'TRANSFER_TO_COLLECTOR':
-            case 'TRANSFER_TO_SAFE':
-              totalSafeTransfersOut += Math.abs(amount);
-              break;
-            case 'TRANSFER_FROM_COLLECTOR':
-            case 'TRANSFER_FROM_SAFE':
-              totalSafeTransfersIn += amount;
-              break;
-          }
+        data.safeTransactionsByManager.forEach((transactions) => {
+          transactions.forEach((tx) => {
+            const amount = Number(tx.amount);
+            switch (tx.type) {
+              case 'DEPOSIT':
+                totalSafeDeposits += amount;
+                break;
+              case 'WITHDRAWAL':
+                totalSafeWithdrawals += Math.abs(amount);
+                break;
+              case 'EXPENSE':
+                totalSafeExpenses += Math.abs(amount);
+                break;
+              case 'TRANSFER_TO_COLLECTOR':
+              case 'TRANSFER_TO_SAFE':
+                totalSafeTransfersOut += Math.abs(amount);
+                break;
+              case 'TRANSFER_FROM_COLLECTOR':
+              case 'TRANSFER_FROM_SAFE':
+                totalSafeTransfersIn += amount;
+                break;
+            }
+          });
         });
 
         const netAmount = totalCollections - totalDisbursements - totalExpenses - totalWithdrawals + totalAdjustments - totalResets;
@@ -2153,108 +2190,14 @@ export class DailyReportsService {
           doc.moveDown(0.5);
         }
 
-        // Sección de Transacciones de Caja Fuerte
-        if (data.safeTransactions.length > 0) {
-          addSectionHeader('MOVIMIENTOS DE CAJA FUERTE');
-          
-          doc.fontSize(9).fillColor('#2c3e50').font('Helvetica');
-          doc.text(`Total de transacciones: ${data.safeTransactions.length}`, 40, doc.y);
-          doc.moveDown(0.5);
-
-          // Tabla de transacciones de safe
-          const safeRowHeight = 25;
-          const safeColWidths = {
-            fecha: 80,
-            tipo: 120,
-            descripcion: 200,
-            monto: 100,
-          };
-
-          // Encabezado de tabla
-          doc.fontSize(8)
-            .fillColor('#ffffff')
-            .font('Helvetica-Bold');
-          doc.rect(40, doc.y, doc.page.width - 80, safeRowHeight)
-            .fillColor('#34495e')
-            .fill();
-          doc.text('Fecha', 45, doc.y + 8);
-          doc.text('Tipo', 45 + safeColWidths.fecha, doc.y + 8);
-          doc.text('Descripción', 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 8);
-          doc.text('Monto', doc.page.width - 45 - safeColWidths.monto, doc.y + 8, { align: 'right' });
-          doc.y += safeRowHeight;
-
-          // Filas de transacciones de safe
-          data.safeTransactions.forEach((tx) => {
-            if (doc.y + safeRowHeight > doc.page.height - 60) {
-              addFooter();
-              doc.addPage();
-              addFooter();
-              // Re-agregar encabezado
-              doc.fontSize(8)
-                .fillColor('#ffffff')
-                .font('Helvetica-Bold');
-              doc.rect(40, doc.y, doc.page.width - 80, safeRowHeight)
-                .fillColor('#34495e')
-                .fill();
-              doc.text('Fecha', 45, doc.y + 8);
-              doc.text('Tipo', 45 + safeColWidths.fecha, doc.y + 8);
-              doc.text('Descripción', 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 8);
-              doc.text('Monto', doc.page.width - 45 - safeColWidths.monto, doc.y + 8, { align: 'right' });
-              doc.y += safeRowHeight;
-            }
-
-            const fecha = DateTime.fromJSDate(tx.createdAt)
-              .setZone('America/Argentina/Buenos_Aires')
-              .toFormat('dd/MM/yyyy HH:mm');
-            const amount = Number(tx.amount);
-            const isNegative = amount < 0;
-            const translatedType = this.translateTransactionType(tx.type);
-
-            // Construir descripción mejorada
-            let description = tx.description || '-';
-            if (tx.expense?.name) {
-              description = `${description} (${tx.expense.name})`;
-            }
-
-            doc.fontSize(8)
-              .fillColor(isNegative ? '#e74c3c' : '#27ae60')
-              .font('Helvetica');
-            
-            doc.text(fecha, 45, doc.y + 6);
-            doc.text(translatedType, 45 + safeColWidths.fecha, doc.y + 6, {
-              width: safeColWidths.tipo,
-              ellipsis: true,
-            });
-            doc.text(description, 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 6, {
-              width: safeColWidths.descripcion,
-              ellipsis: true,
-            });
-            doc.text(
-              `$${Math.abs(amount).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`,
-              doc.page.width - 45 - safeColWidths.monto,
-              doc.y + 6,
-              { align: 'right' }
-            );
-
-            // Línea separadora
-            doc.moveTo(40, doc.y + safeRowHeight - 2)
-              .lineTo(doc.page.width - 40, doc.y + safeRowHeight - 2)
-              .strokeColor('#ecf0f1')
-              .lineWidth(0.5)
-              .stroke();
-
-            doc.y += safeRowHeight;
-          });
-
-          doc.moveDown(0.5);
-        }
-
         // Detalle por Manager
         data.managers.forEach((manager) => {
           const managerTransactions = data.transactionsByManager.get(manager.id) || [];
+          const managerSafeTransactions = data.safeTransactionsByManager.get(manager.id) || [];
           
-          if (managerTransactions.length === 0) {
-            return; // Skip managers sin transacciones
+          // Skip managers sin transacciones de wallet ni de safe
+          if (managerTransactions.length === 0 && managerSafeTransactions.length === 0) {
+            return;
           }
 
           addSectionHeader(`MANAGER: ${manager.fullName.toUpperCase()}`);
@@ -2264,7 +2207,7 @@ export class DailyReportsService {
             .font('Helvetica')
             .text(`Email: ${manager.email}`, 40, doc.y);
           doc.moveDown(0.3);
-          doc.text(`Total de transacciones: ${managerTransactions.length}`, 40, doc.y);
+          doc.text(`Transacciones Wallet: ${managerTransactions.length} | Transacciones Caja Fuerte: ${managerSafeTransactions.length}`, 40, doc.y);
           doc.moveDown(0.5);
 
           // Tabla de transacciones
@@ -2358,6 +2301,110 @@ export class DailyReportsService {
           });
 
           doc.moveDown(0.5);
+
+          // Sección de Movimientos de Caja Fuerte del Manager
+          if (managerSafeTransactions.length > 0) {
+            doc.moveDown(0.3);
+            doc.fontSize(12)
+              .fillColor('#1a1a1a')
+              .font('Helvetica-Bold')
+              .text('Movimientos de Caja Fuerte', { underline: false });
+            doc.moveDown(0.3);
+            // Línea decorativa
+            doc.moveTo(40, doc.y)
+              .lineTo(doc.page.width - 40, doc.y)
+              .strokeColor('#cccccc')
+              .lineWidth(1)
+              .stroke();
+            doc.moveDown(0.5);
+
+            // Tabla de transacciones de safe
+            const safeRowHeight = 25;
+            const safeColWidths = {
+              fecha: 80,
+              tipo: 120,
+              descripcion: 200,
+              monto: 100,
+            };
+
+            // Encabezado de tabla
+            doc.fontSize(8)
+              .fillColor('#ffffff')
+              .font('Helvetica-Bold');
+            doc.rect(40, doc.y, doc.page.width - 80, safeRowHeight)
+              .fillColor('#34495e')
+              .fill();
+            doc.text('Fecha', 45, doc.y + 8);
+            doc.text('Tipo', 45 + safeColWidths.fecha, doc.y + 8);
+            doc.text('Descripción', 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 8);
+            doc.text('Monto', doc.page.width - 45 - safeColWidths.monto, doc.y + 8, { align: 'right' });
+            doc.y += safeRowHeight;
+
+            // Filas de transacciones de safe
+            managerSafeTransactions.forEach((tx) => {
+              if (doc.y + safeRowHeight > doc.page.height - 60) {
+                addFooter();
+                doc.addPage();
+                addFooter();
+                // Re-agregar encabezado
+                doc.fontSize(8)
+                  .fillColor('#ffffff')
+                  .font('Helvetica-Bold');
+                doc.rect(40, doc.y, doc.page.width - 80, safeRowHeight)
+                  .fillColor('#34495e')
+                  .fill();
+                doc.text('Fecha', 45, doc.y + 8);
+                doc.text('Tipo', 45 + safeColWidths.fecha, doc.y + 8);
+                doc.text('Descripción', 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 8);
+                doc.text('Monto', doc.page.width - 45 - safeColWidths.monto, doc.y + 8, { align: 'right' });
+                doc.y += safeRowHeight;
+              }
+
+              const fecha = DateTime.fromJSDate(tx.createdAt)
+                .setZone('America/Argentina/Buenos_Aires')
+                .toFormat('dd/MM/yyyy HH:mm');
+              const amount = Number(tx.amount);
+              const isNegative = amount < 0;
+              const translatedType = this.translateTransactionType(tx.type);
+
+              // Construir descripción mejorada
+              let description = tx.description || '-';
+              if (tx.expense?.name) {
+                description = `${description} (${tx.expense.name})`;
+              }
+
+              doc.fontSize(8)
+                .fillColor(isNegative ? '#e74c3c' : '#27ae60')
+                .font('Helvetica');
+              
+              doc.text(fecha, 45, doc.y + 6);
+              doc.text(translatedType, 45 + safeColWidths.fecha, doc.y + 6, {
+                width: safeColWidths.tipo,
+                ellipsis: true,
+              });
+              doc.text(description, 45 + safeColWidths.fecha + safeColWidths.tipo, doc.y + 6, {
+                width: safeColWidths.descripcion,
+                ellipsis: true,
+              });
+              doc.text(
+                `$${Math.abs(amount).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`,
+                doc.page.width - 45 - safeColWidths.monto,
+                doc.y + 6,
+                { align: 'right' }
+              );
+
+              // Línea separadora
+              doc.moveTo(40, doc.y + safeRowHeight - 2)
+                .lineTo(doc.page.width - 40, doc.y + safeRowHeight - 2)
+                .strokeColor('#ecf0f1')
+                .lineWidth(0.5)
+                .stroke();
+
+              doc.y += safeRowHeight;
+            });
+
+            doc.moveDown(0.5);
+          }
         });
 
         // Agregar footer en la última página

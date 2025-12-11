@@ -123,6 +123,45 @@ export class CollectorWalletController {
     );
   }
 
+  @Get('last-withdrawal')
+  @Roles(UserRole.MANAGER, UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Obtener el último retiro realizado',
+    description:
+      'Retorna los datos del último retiro de la wallet de cobros. ' +
+      'Para MANAGER: devuelve su último retiro (puede pasar su managerId o no). ' +
+      'Para SUBADMIN: puede pasar un managerId opcional para obtener el último retiro de un manager específico. ' +
+      'Si no se pasa managerId, SUBADMIN obtiene el último retiro de cualquiera de sus managers.',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: false,
+    type: String,
+    description: 'ID del manager. Opcional. Para SUBADMIN: permite especificar un manager. Para MANAGER: debe ser su propio ID.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Último retiro obtenido exitosamente. Retorna null si no hay retiros.',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'No tienes permiso para acceder a este manager',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Manager no encontrado',
+  })
+  async getLastWithdrawal(
+    @CurrentUser() currentUser: any,
+    @Query('managerId') managerId?: string,
+  ) {
+    return this.collectorWalletService.getLastWithdrawal(
+      currentUser.id,
+      currentUser.role,
+      managerId,
+    );
+  }
+
   @Post('withdraw')
   @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN)
   @ApiOperation({

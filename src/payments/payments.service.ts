@@ -393,37 +393,38 @@ export class PaymentsService {
         remainingAmount = 0;
       }
 
-      // 2. Si hay excedente, buscar SubLoans anteriores PARTIAL
+      // 2. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING o PARTIAL)
+      // El excedente se usa para adelantar pagos de cuotas posteriores
       if (remainingAmount > 0) {
-        const partialSubLoans = await tx.subLoan.findMany({
+        const nextSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
-            paymentNumber: { lt: subLoan.paymentNumber },
-            status: SubLoanStatus.PARTIAL,
+            paymentNumber: { gt: subLoan.paymentNumber },
+            status: { in: [SubLoanStatus.PENDING, SubLoanStatus.PARTIAL] },
             deletedAt: null,
           },
           orderBy: { paymentNumber: 'asc' },
         });
 
-        for (const partial of partialSubLoans) {
+        for (const nextSubLoan of nextSubLoans) {
           if (remainingAmount <= 0) break;
 
-          const partialRemainingAmount =
-            Number(partial.totalAmount) - Number(partial.paidAmount);
+          const nextRemainingAmount =
+            Number(nextSubLoan.totalAmount) - Number(nextSubLoan.paidAmount);
 
-          if (remainingAmount >= partialRemainingAmount) {
+          if (remainingAmount >= nextRemainingAmount) {
             // Completar este SubLoan
             await tx.subLoan.update({
-              where: { id: partial.id },
+              where: { id: nextSubLoan.id },
               data: {
-                paidAmount: partial.totalAmount,
+                paidAmount: nextSubLoan.totalAmount,
                 status: SubLoanStatus.PAID,
                 paidDate: paymentDate
                   ? DateUtil.parseToDate(paymentDate)
                   : DateUtil.now().toJSDate(),
                 paymentHistory: this.addToPaymentHistory(
-                  partial.paymentHistory,
-                  partialRemainingAmount,
+                  nextSubLoan.paymentHistory,
+                  nextRemainingAmount,
                   0,
                   paymentDate,
                 ),
@@ -431,27 +432,27 @@ export class PaymentsService {
             });
 
             distributedPayments.push({
-              subLoanId: partial.id,
-              paymentNumber: partial.paymentNumber,
-              distributedAmount: partialRemainingAmount,
+              subLoanId: nextSubLoan.id,
+              paymentNumber: nextSubLoan.paymentNumber,
+              distributedAmount: nextRemainingAmount,
               newStatus: SubLoanStatus.PAID,
-              newPaidAmount: Number(partial.totalAmount),
+              newPaidAmount: Number(nextSubLoan.totalAmount),
             });
 
-            remainingAmount -= partialRemainingAmount;
+            remainingAmount -= nextRemainingAmount;
           } else {
-            // Pago parcial a este SubLoan
-            const newPaidAmount = Number(partial.paidAmount) + remainingAmount;
+            // Pago parcial a este SubLoan (el excedente no alcanza para completar)
+            const newPaidAmount = Number(nextSubLoan.paidAmount) + remainingAmount;
             const newRemainingAmount =
-              Number(partial.totalAmount) - newPaidAmount;
+              Number(nextSubLoan.totalAmount) - newPaidAmount;
 
             await tx.subLoan.update({
-              where: { id: partial.id },
+              where: { id: nextSubLoan.id },
               data: {
                 paidAmount: new Prisma.Decimal(newPaidAmount),
                 status: SubLoanStatus.PARTIAL,
                 paymentHistory: this.addToPaymentHistory(
-                  partial.paymentHistory,
+                  nextSubLoan.paymentHistory,
                   remainingAmount,
                   newRemainingAmount,
                   paymentDate,
@@ -460,8 +461,8 @@ export class PaymentsService {
             });
 
             distributedPayments.push({
-              subLoanId: partial.id,
-              paymentNumber: partial.paymentNumber,
+              subLoanId: nextSubLoan.id,
+              paymentNumber: nextSubLoan.paymentNumber,
               distributedAmount: remainingAmount,
               newStatus: SubLoanStatus.PARTIAL,
               newPaidAmount,
