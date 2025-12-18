@@ -862,6 +862,28 @@ export class CollectionRoutesService {
 
     const netAmount = totalCollected.sub(totalExpenses);
 
+    // Calcular total "real" cobrado del día desde payments (para totalCollectedPayments)
+    // route.routeDate es el startOfDay Buenos Aires guardado en UTC (03:00Z).
+    const dayStart = DateUtil.startOfDay(DateUtil.fromJSDate(route.routeDate)).toJSDate();
+    const dayEnd = DateUtil.endOfDay(DateUtil.fromJSDate(route.routeDate)).toJSDate();
+    const paymentsSum = await this.prisma.payment.aggregate({
+      where: {
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        subLoan: {
+          loan: {
+            managerId: route.managerId,
+          },
+        },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+    const totalCollectedPayments = paymentsSum._sum.amount ?? new Decimal(0);
+
     // Actualizar la ruta y sus items en una transacción
     await this.prisma.$transaction([
       ...updatedItems.map((item) =>
@@ -877,6 +899,7 @@ export class CollectionRoutesService {
         data: {
           status: 'CLOSED',
           totalCollected,
+          totalCollectedPayments,
           totalExpenses,
           netAmount,
           notes: closeDto.notes,
@@ -1208,29 +1231,25 @@ export class CollectionRoutesService {
     // Buscar préstamos del día
     const totalLoaned = await this.getLoansOfDay(route.managerId, route.routeDate);
     
-    // Si la ruta está ACTIVE, calcular totales en tiempo real
-    let totalCollected = Number(route.totalCollected);
+    // totalCollectedPayments: suma "real" cobrada ese día (payments del día).
+    // totalCollected: se mantiene por compatibilidad, pero se basa en totalCollectedPayments.
+    const totalCollectedPayments = Number(route.totalCollectedPayments ?? 0);
+
+    let totalCollected = totalCollectedPayments;
     let totalExpenses = Number(route.totalExpenses);
     let netAmount = Number(route.netAmount);
 
     if (route.status === 'ACTIVE') {
-      // Calcular total cobrado desde paidAmount de los subloans
-      totalCollected = route.items.reduce((sum: number, item: any) => {
-        const paidAmount = item.subLoan?.paidAmount || 0;
-        return sum + Number(paidAmount);
-      }, 0);
-
       // Calcular total de gastos desde los expenses de la ruta
-      totalExpenses = (route.expenses || []).reduce((sum: number, expense: any) => {
-        return sum + Number(expense.amount);
-      }, 0);
-
-      // Calcular neto: cobrado - gastos - préstamos del día
-      netAmount = totalCollected - totalExpenses - totalLoaned;
-    } else {
-      // Para rutas cerradas, restar préstamos del día del netAmount almacenado
-      netAmount = netAmount - totalLoaned;
+      totalExpenses = (route.expenses || []).reduce(
+        (sum: number, expense: any) => sum + Number(expense.amount),
+        0,
+      );
     }
+
+    // Neto siempre coherente con el total real cobrado del día:
+    // neto = totalCollectedPayments - gastos - préstamos del día
+    netAmount = totalCollectedPayments - totalExpenses - totalLoaned;
 
     return {
       id: route.id,
@@ -1238,6 +1257,7 @@ export class CollectionRoutesService {
       routeDate: route.routeDate,
       status: route.status,
       totalCollected,
+      totalCollectedPayments,
       totalExpenses,
       netAmount,
       totalLoaned,

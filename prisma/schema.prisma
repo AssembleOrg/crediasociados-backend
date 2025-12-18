@@ -434,6 +434,9 @@ model DailyCollectionRoute {
   routeDate      DateTime // Fecha de la ruta (sin hora)
   status         CollectionRouteStatus @default(ACTIVE)
   totalCollected Decimal               @default(0) @db.Decimal(40, 2)
+  // Total cobrado "real" del día: suma de payments creados ese día para el manager.
+  // NO depende de subloans/items (sirve para pagos adelantados).
+  totalCollectedPayments Decimal       @default(0) @db.Decimal(40, 2)
   totalExpenses  Decimal               @default(0) @db.Decimal(40, 2)
   netAmount      Decimal               @default(0) @db.Decimal(40, 2)
   notes          String?

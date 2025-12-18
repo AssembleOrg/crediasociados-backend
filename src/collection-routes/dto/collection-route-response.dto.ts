@@ -18,6 +18,13 @@ export class CollectionRouteResponseDto {
   @ApiProperty({ example: 50000.0 })
   totalCollected: number;
 
+  @ApiProperty({
+    example: 50000.0,
+    description:
+      'Total cobrado real del día (suma de payments creados ese día para el manager)',
+  })
+  totalCollectedPayments: number;
+
   @ApiProperty({ example: 5000.0 })
   totalExpenses: number;
 

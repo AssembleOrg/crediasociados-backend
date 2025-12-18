@@ -393,8 +393,88 @@ export class PaymentsService {
         remainingAmount = 0;
       }
 
-      // 2. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING o PARTIAL)
-      // El excedente se usa para adelantar pagos de cuotas posteriores
+      // 2. Si hay excedente, primero cubrir SubLoans ANTERIORES no pagados (OVERDUE/PENDING/PARTIAL)
+      // Regla: primero la cuota seleccionada, luego anteriores, luego futuras.
+      if (remainingAmount > 0) {
+        const previousSubLoans = await tx.subLoan.findMany({
+          where: {
+            loanId: subLoan.loanId,
+            paymentNumber: { lt: subLoan.paymentNumber },
+            status: {
+              in: [SubLoanStatus.OVERDUE, SubLoanStatus.PENDING, SubLoanStatus.PARTIAL],
+            },
+            deletedAt: null,
+          },
+          orderBy: { paymentNumber: 'desc' },
+        });
+
+        for (const prev of previousSubLoans) {
+          if (remainingAmount <= 0) break;
+
+          const prevRemaining =
+            Number(prev.totalAmount) - Number(prev.paidAmount);
+          if (prevRemaining <= 0) continue;
+
+          if (remainingAmount >= prevRemaining) {
+            await tx.subLoan.update({
+              where: { id: prev.id },
+              data: {
+                paidAmount: prev.totalAmount,
+                status: SubLoanStatus.PAID,
+                paidDate: paymentDate
+                  ? DateUtil.parseToDate(paymentDate)
+                  : DateUtil.now().toJSDate(),
+                paymentHistory: this.addToPaymentHistory(
+                  prev.paymentHistory,
+                  prevRemaining,
+                  0,
+                  paymentDate,
+                ),
+              },
+            });
+
+            distributedPayments.push({
+              subLoanId: prev.id,
+              paymentNumber: prev.paymentNumber,
+              distributedAmount: prevRemaining,
+              newStatus: SubLoanStatus.PAID,
+              newPaidAmount: Number(prev.totalAmount),
+            });
+
+            remainingAmount -= prevRemaining;
+          } else {
+            const newPrevPaid = Number(prev.paidAmount) + remainingAmount;
+            const newPrevRemaining = Number(prev.totalAmount) - newPrevPaid;
+
+            await tx.subLoan.update({
+              where: { id: prev.id },
+              data: {
+                paidAmount: new Prisma.Decimal(newPrevPaid),
+                status: SubLoanStatus.PARTIAL,
+                paymentHistory: this.addToPaymentHistory(
+                  prev.paymentHistory,
+                  remainingAmount,
+                  newPrevRemaining,
+                  paymentDate,
+                ),
+              },
+            });
+
+            distributedPayments.push({
+              subLoanId: prev.id,
+              paymentNumber: prev.paymentNumber,
+              distributedAmount: remainingAmount,
+              newStatus: SubLoanStatus.PARTIAL,
+              newPaidAmount: newPrevPaid,
+            });
+
+            remainingAmount = 0;
+          }
+        }
+      }
+
+      // 3. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING o PARTIAL)
+      // El excedente restante se usa para adelantar pagos de cuotas posteriores
       if (remainingAmount > 0) {
         const nextSubLoans = await tx.subLoan.findMany({
           where: {
@@ -473,7 +553,7 @@ export class PaymentsService {
         }
       }
 
-      // 3. Crear registro de pago
+      // 4. Crear registro de pago
       const payment = await tx.payment.create({
         data: {
           subLoanId,
@@ -484,6 +564,44 @@ export class PaymentsService {
             : DateUtil.now().toJSDate(),
           description: description || `Pago SubLoan #${subLoan.paymentNumber}`,
         },
+      });
+
+      // 3a. Marcar en paymentHistory qué pago origen generó estas actualizaciones
+      // Esto permite resetear adelantados desde cualquier cuota afectada.
+      const affectedSubLoanIds = Array.from(
+        new Set([
+          subLoanId,
+          ...distributedPayments.map((dp) => dp.subLoanId),
+        ]),
+      );
+
+      for (const affectedId of affectedSubLoanIds) {
+        const sl = await tx.subLoan.findUnique({
+          where: { id: affectedId },
+          select: { paymentHistory: true },
+        });
+
+        const hist = Array.isArray(sl?.paymentHistory) ? (sl!.paymentHistory as any[]) : [];
+        if (hist.length === 0) continue;
+
+        const last = hist[hist.length - 1];
+        if (last && typeof last === 'object' && !('sourcePaymentId' in last)) {
+          last.sourcePaymentId = payment.id;
+          await tx.subLoan.update({
+            where: { id: affectedId },
+            data: {
+              paymentHistory: hist as any,
+            },
+          });
+        }
+      }
+
+      // 3b. Actualizar totalCollectedPayments de la ruta del día (sin tocar wallets/safe)
+      // Nota: routeDate se guarda como inicio del día en Buenos Aires
+      await this.recalcRouteTotalCollectedPaymentsForDay({
+        tx,
+        managerId,
+        day: payment.createdAt,
       });
 
       // 4. Acreditar a la cartera del manager
@@ -532,6 +650,49 @@ export class PaymentsService {
       },
       distributedPayments: result.distributedPayments,
     };
+  }
+
+  /**
+   * Recalcula y persiste el total cobrado real del día en la ruta:
+   * totalCollectedPayments = SUM(payments.amount) del día (createdAt) para el manager.
+   *
+   * Importante: NO toca safe ni collector wallet; solo lee payments y actualiza daily_collection_routes.
+   */
+  private async recalcRouteTotalCollectedPaymentsForDay(params: {
+    tx: Prisma.TransactionClient;
+    managerId: string;
+    day: Date; // cualquier hora, se normaliza a start/end of day (Buenos Aires)
+  }): Promise<void> {
+    const { tx, managerId, day } = params;
+    const dayStart = DateUtil.startOfDay(DateUtil.fromJSDate(day)).toJSDate();
+    const dayEnd = DateUtil.endOfDay(DateUtil.fromJSDate(day)).toJSDate();
+
+    const paymentsSum = await tx.payment.aggregate({
+      where: {
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        subLoan: {
+          loan: {
+            managerId: managerId,
+          },
+        },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+
+    await tx.dailyCollectionRoute.updateMany({
+      where: {
+        managerId: managerId,
+        routeDate: dayStart,
+      },
+      data: {
+        totalCollectedPayments: paymentsSum._sum.amount ?? new Prisma.Decimal(0),
+      },
+    });
   }
 
   /**
@@ -642,6 +803,7 @@ export class PaymentsService {
     amount: number,
     balance: number,
     paymentDate?: string,
+    sourcePaymentId?: string,
   ): any {
     const history = Array.isArray(currentHistory) ? currentHistory : [];
 
@@ -653,8 +815,20 @@ export class PaymentsService {
           : DateUtil.now().toISO(),
         amount,
         balance,
+        ...(sourcePaymentId ? { sourcePaymentId } : {}),
       },
     ];
+  }
+
+  /**
+   * Helper: Remover entradas del historial asociadas a un payment origen
+   */
+  private removePaymentFromHistory(
+    currentHistory: any,
+    sourcePaymentId: string,
+  ): any {
+    const history = Array.isArray(currentHistory) ? currentHistory : [];
+    return history.filter((h: any) => h?.sourcePaymentId !== sourcePaymentId);
   }
 
   /**
@@ -738,9 +912,34 @@ export class PaymentsService {
       }
     }
 
-    // Validar que haya pagos
+    // Si no hay payments, puede ser una cuota pagada por adelantado.
+    // En ese caso, buscar el payment origen en paymentHistory y redirigir el reset al subLoan que sí tiene el payment.
     if (subLoan.payments.length === 0) {
-      throw new BadRequestException('El SubLoan no tiene pagos para resetear');
+      const paymentHistory = Array.isArray(subLoan.paymentHistory)
+        ? (subLoan.paymentHistory as any[])
+        : [];
+      const lastWithSource = [...paymentHistory]
+        .reverse()
+        .find((h: any) => h && typeof h === 'object' && h.sourcePaymentId);
+
+      if (!lastWithSource?.sourcePaymentId) {
+        throw new BadRequestException('El SubLoan no tiene pagos para resetear');
+      }
+
+      const sourcePayment = await this.prisma.payment.findUnique({
+        where: { id: String(lastWithSource.sourcePaymentId) },
+      });
+
+      if (!sourcePayment) {
+        throw new BadRequestException('El SubLoan no tiene pagos para resetear');
+      }
+
+      // Reintentar reseteo sobre el subLoan que contiene el payment origen
+      return this.resetSubLoanPayments(
+        sourcePayment.subLoanId,
+        userId,
+        userRole,
+      );
     }
 
     // Validar que el último pago no sea mayor a 24 horas
@@ -749,9 +948,9 @@ export class PaymentsService {
     const now = DateUtil.now();
     const hoursDiff = now.diff(lastPaymentDate, 'hours').hours;
 
-    if (hoursDiff > 24) {
+    if (hoursDiff > 20) {
       throw new BadRequestException(
-        `No se puede resetear: el último pago fue hace ${Math.floor(hoursDiff)} horas. Solo se permiten reseteos de pagos realizados en las últimas 24 horas.`,
+        `No se puede resetear: el último pago fue hace ${Math.floor(hoursDiff)} horas. Solo se permiten reseteos de pagos realizados en las últimas 20 horas.`,
       );
     }
 
@@ -765,6 +964,15 @@ export class PaymentsService {
       (sum, p) => sum + Number(p.amount),
       0,
     );
+
+    // Días afectados (createdAt) para recalcular totalCollectedPayments de la ruta
+    const affectedDays = Array.from(
+      new Set(
+        subLoan.payments.map((p) =>
+          DateUtil.fromPrismaDate(p.createdAt).toFormat('yyyy-MM-dd'),
+        ),
+      ),
+    ).map((isoDate) => DateUtil.parseToDate(isoDate));
 
     // Realizar el reset en transacción
     const result = await this.prisma.$transaction(async (tx) => {
@@ -909,6 +1117,60 @@ export class PaymentsService {
         where: { subLoanId },
       });
 
+      // 3b. Revertir cuotas adicionales pagadas por el mismo payment (adelantos)
+      // Usamos sourcePaymentId en paymentHistory para encontrar subloans afectados.
+      const sourcePaymentId = lastPayment.id;
+      const loanSubLoans = await tx.subLoan.findMany({
+        where: {
+          loanId: subLoan.loanId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          totalAmount: true,
+          paidAmount: true,
+          status: true,
+          paidDate: true,
+          paymentHistory: true,
+        },
+      });
+
+      for (const sl of loanSubLoans) {
+        if (sl.id === subLoanId) continue;
+        const hist = Array.isArray(sl.paymentHistory)
+          ? (sl.paymentHistory as any[])
+          : [];
+        const relatedEntries = hist.filter(
+          (h: any) => h && typeof h === 'object' && h.sourcePaymentId === sourcePaymentId,
+        );
+        if (relatedEntries.length === 0) continue;
+
+        const amountToRevert = relatedEntries.reduce(
+          (sum: number, h: any) => sum + Number(h.amount || 0),
+          0,
+        );
+        if (amountToRevert <= 0) continue;
+
+        const newPaid = Math.max(0, Number(sl.paidAmount) - amountToRevert);
+        const total = Number(sl.totalAmount);
+        const newStatus =
+          newPaid <= 0
+            ? SubLoanStatus.PENDING
+            : newPaid >= total
+              ? SubLoanStatus.PAID
+              : SubLoanStatus.PARTIAL;
+
+        await tx.subLoan.update({
+          where: { id: sl.id },
+          data: {
+            paidAmount: new Prisma.Decimal(newPaid),
+            status: newStatus,
+            paidDate: newStatus === SubLoanStatus.PAID ? sl.paidDate : null,
+            paymentHistory: this.removePaymentFromHistory(hist, sourcePaymentId),
+          },
+        });
+      }
+
       // 4. Actualizar amountCollected en las rutas del día que contengan este SubLoan
       // Buscar items de rutas activas que contengan este SubLoan
       const routeItems = await tx.collectionRouteItem.findMany({
@@ -971,6 +1233,15 @@ export class PaymentsService {
             totalExpenses: routeTotalExpenses,
             netAmount: routeNetAmount,
           },
+        });
+      }
+
+      // Recalcular totalCollectedPayments para los días afectados
+      for (const day of affectedDays) {
+        await this.recalcRouteTotalCollectedPaymentsForDay({
+          tx,
+          managerId,
+          day,
         });
       }
 
@@ -1112,6 +1383,15 @@ export class PaymentsService {
       (sum, p) => sum + Number(p.amount),
       0,
     );
+
+    // Días afectados antes del cambio (createdAt) para recalcular totalCollectedPayments de la ruta
+    const affectedDaysBefore = Array.from(
+      new Set(
+        subLoan.payments.map((p) =>
+          DateUtil.fromPrismaDate(p.createdAt).toFormat('yyyy-MM-dd'),
+        ),
+      ),
+    ).map((isoDate) => DateUtil.parseToDate(isoDate));
 
     // Realizar la reversión completa y nuevo pago en transacción
     const result = await this.prisma.$transaction(async (tx) => {
@@ -1310,37 +1590,41 @@ export class PaymentsService {
       // Calcular el excedente después de aplicar al SubLoan actual
       remainingAmount -= newPaidAmount;
 
-      // Si hay excedente, buscar SubLoans anteriores PARTIAL
+      // Si hay excedente, primero cubrir SubLoans ANTERIORES no pagados (OVERDUE/PENDING/PARTIAL)
+      // Regla: primero la cuota seleccionada, luego anteriores, luego futuras.
       if (remainingAmount > 0) {
-        const partialSubLoans = await tx.subLoan.findMany({
+        const previousSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
             paymentNumber: { lt: subLoan.paymentNumber },
-            status: SubLoanStatus.PARTIAL,
+            status: {
+              in: [SubLoanStatus.OVERDUE, SubLoanStatus.PENDING, SubLoanStatus.PARTIAL],
+            },
             deletedAt: null,
           },
-          orderBy: { paymentNumber: 'asc' },
+          orderBy: { paymentNumber: 'desc' },
         });
 
-        for (const partial of partialSubLoans) {
+        for (const prev of previousSubLoans) {
           if (remainingAmount <= 0) break;
 
-          const partialRemainingAmount =
-            Number(partial.totalAmount) - Number(partial.paidAmount);
+          const prevRemainingAmount =
+            Number(prev.totalAmount) - Number(prev.paidAmount);
+          if (prevRemainingAmount <= 0) continue;
 
-          if (remainingAmount >= partialRemainingAmount) {
-            // Completar este SubLoan
+          if (remainingAmount >= prevRemainingAmount) {
+            // Completar este SubLoan anterior
             await tx.subLoan.update({
-              where: { id: partial.id },
+              where: { id: prev.id },
               data: {
-                paidAmount: partial.totalAmount,
+                paidAmount: prev.totalAmount,
                 status: SubLoanStatus.PAID,
                 paidDate: paymentDate
                   ? DateUtil.parseToDate(paymentDate)
                   : DateUtil.now().toJSDate(),
                 paymentHistory: this.addToPaymentHistory(
-                  partial.paymentHistory,
-                  partialRemainingAmount,
+                  prev.paymentHistory,
+                  prevRemainingAmount,
                   0,
                   paymentDate,
                 ),
@@ -1348,27 +1632,27 @@ export class PaymentsService {
             });
 
             distributedPayments.push({
-              subLoanId: partial.id,
-              paymentNumber: partial.paymentNumber,
-              distributedAmount: partialRemainingAmount,
+              subLoanId: prev.id,
+              paymentNumber: prev.paymentNumber,
+              distributedAmount: prevRemainingAmount,
               newStatus: SubLoanStatus.PAID,
-              newPaidAmount: Number(partial.totalAmount),
+              newPaidAmount: Number(prev.totalAmount),
             });
 
-            remainingAmount -= partialRemainingAmount;
+            remainingAmount -= prevRemainingAmount;
           } else {
-            // Pago parcial a este SubLoan
-            const newPaidAmount = Number(partial.paidAmount) + remainingAmount;
+            // Pago parcial a este SubLoan anterior
+            const newPaidAmount = Number(prev.paidAmount) + remainingAmount;
             const newRemainingAmount =
-              Number(partial.totalAmount) - newPaidAmount;
+              Number(prev.totalAmount) - newPaidAmount;
 
             await tx.subLoan.update({
-              where: { id: partial.id },
+              where: { id: prev.id },
               data: {
                 paidAmount: new Prisma.Decimal(newPaidAmount),
                 status: SubLoanStatus.PARTIAL,
                 paymentHistory: this.addToPaymentHistory(
-                  partial.paymentHistory,
+                  prev.paymentHistory,
                   remainingAmount,
                   newRemainingAmount,
                   paymentDate,
@@ -1377,8 +1661,86 @@ export class PaymentsService {
             });
 
             distributedPayments.push({
-              subLoanId: partial.id,
-              paymentNumber: partial.paymentNumber,
+              subLoanId: prev.id,
+              paymentNumber: prev.paymentNumber,
+              distributedAmount: remainingAmount,
+              newStatus: SubLoanStatus.PARTIAL,
+              newPaidAmount,
+            });
+
+            remainingAmount = 0;
+          }
+        }
+      }
+
+      // Si queda excedente, recién ahí pagar SubLoans SIGUIENTES (adelantos)
+      if (remainingAmount > 0) {
+        const nextSubLoans = await tx.subLoan.findMany({
+          where: {
+            loanId: subLoan.loanId,
+            paymentNumber: { gt: subLoan.paymentNumber },
+            status: { in: [SubLoanStatus.PENDING, SubLoanStatus.PARTIAL] },
+            deletedAt: null,
+          },
+          orderBy: { paymentNumber: 'asc' },
+        });
+
+        for (const nextSubLoan of nextSubLoans) {
+          if (remainingAmount <= 0) break;
+
+          const nextRemainingAmount =
+            Number(nextSubLoan.totalAmount) - Number(nextSubLoan.paidAmount);
+          if (nextRemainingAmount <= 0) continue;
+
+          if (remainingAmount >= nextRemainingAmount) {
+            await tx.subLoan.update({
+              where: { id: nextSubLoan.id },
+              data: {
+                paidAmount: nextSubLoan.totalAmount,
+                status: SubLoanStatus.PAID,
+                paidDate: paymentDate
+                  ? DateUtil.parseToDate(paymentDate)
+                  : DateUtil.now().toJSDate(),
+                paymentHistory: this.addToPaymentHistory(
+                  nextSubLoan.paymentHistory,
+                  nextRemainingAmount,
+                  0,
+                  paymentDate,
+                ),
+              },
+            });
+
+            distributedPayments.push({
+              subLoanId: nextSubLoan.id,
+              paymentNumber: nextSubLoan.paymentNumber,
+              distributedAmount: nextRemainingAmount,
+              newStatus: SubLoanStatus.PAID,
+              newPaidAmount: Number(nextSubLoan.totalAmount),
+            });
+
+            remainingAmount -= nextRemainingAmount;
+          } else {
+            const newPaidAmount = Number(nextSubLoan.paidAmount) + remainingAmount;
+            const newRemainingAmount =
+              Number(nextSubLoan.totalAmount) - newPaidAmount;
+
+            await tx.subLoan.update({
+              where: { id: nextSubLoan.id },
+              data: {
+                paidAmount: new Prisma.Decimal(newPaidAmount),
+                status: SubLoanStatus.PARTIAL,
+                paymentHistory: this.addToPaymentHistory(
+                  nextSubLoan.paymentHistory,
+                  remainingAmount,
+                  newRemainingAmount,
+                  paymentDate,
+                ),
+              },
+            });
+
+            distributedPayments.push({
+              subLoanId: nextSubLoan.id,
+              paymentNumber: nextSubLoan.paymentNumber,
               distributedAmount: remainingAmount,
               newStatus: SubLoanStatus.PARTIAL,
               newPaidAmount,
@@ -1401,6 +1763,44 @@ export class PaymentsService {
           description: description || `Pago editado SubLoan #${subLoan.paymentNumber}`,
         },
       });
+
+      // Marcar sourcePaymentId en la última entrada de paymentHistory del subloan editado (y parciales si aplica)
+      const subLoanAfter = await tx.subLoan.findUnique({
+        where: { id: subLoanId },
+        select: { paymentHistory: true },
+      });
+      const hist = Array.isArray(subLoanAfter?.paymentHistory)
+        ? (subLoanAfter!.paymentHistory as any[])
+        : [];
+      if (hist.length > 0) {
+        const last = hist[hist.length - 1];
+        if (last && typeof last === 'object') {
+          last.sourcePaymentId = payment.id;
+          await tx.subLoan.update({
+            where: { id: subLoanId },
+            data: { paymentHistory: hist as any },
+          });
+        }
+      }
+
+      // 6b. Recalcular totalCollectedPayments para los días afectados (antes y el día del nuevo pago)
+      const affectedDays = [
+        ...affectedDaysBefore,
+        DateUtil.parseToDate(
+          DateUtil.fromJSDate(payment.createdAt).toFormat('yyyy-MM-dd'),
+        ),
+      ];
+      const uniqueAffectedDays = Array.from(
+        new Set(affectedDays.map((d) => DateUtil.fromJSDate(d).toISODate())),
+      ).map((isoDate) => DateUtil.parseToDate(isoDate!));
+
+      for (const day of uniqueAffectedDays) {
+        await this.recalcRouteTotalCollectedPaymentsForDay({
+          tx,
+          managerId,
+          day,
+        });
+      }
 
       // 7. Acreditar a la cartera del manager
       await this.walletService.credit({
