@@ -25,6 +25,15 @@ export class ClientResponseDto {
   @ApiPropertyOptional({ example: 'Empleado' })
   job?: string;
 
+  @ApiPropertyOptional({ 
+    example: 'Cliente con buena historia crediticia',
+    description: 'Descripción adicional del cliente'
+  })
+  description?: string;
+
+  @ApiPropertyOptional({ example: 'Desarrollador de Software' })
+  work?: string;
+
   @ApiProperty({ example: '2024-01-01T00:00:00.000Z' })
   createdAt: Date;
 

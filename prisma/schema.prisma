@@ -52,6 +52,8 @@ model Client {
   updatedAt    DateTime        @updatedAt
   deletedAt    DateTime?
   job          String?
+  description  String?
+  work         String?
   managers     ClientManager[]
   loans        Loan[]
   transactions Transaction[]

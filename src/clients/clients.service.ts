@@ -969,6 +969,8 @@ export class ClientsService {
         fullName: true,
         phone: true,
         address: true,
+        description: true,
+        work: true,
       },
       orderBy: {
         createdAt: 'desc',
@@ -982,6 +984,8 @@ export class ClientsService {
         nombre: client.fullName,
         telefono: client.phone,
         direccion: client.address,
+        description: client.description,
+        work: client.work,
       })),
     };
   }

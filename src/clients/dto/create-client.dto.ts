@@ -35,4 +35,17 @@ export class CreateClientDto {
   @IsOptional()
   @IsString()
   job?: string;
+
+  @ApiPropertyOptional({ 
+    example: 'Cliente con buena historia crediticia',
+    description: 'Descripción adicional del cliente (text area)'
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ example: 'Desarrollador de Software' })
+  @IsOptional()
+  @IsString()
+  work?: string;
 }
