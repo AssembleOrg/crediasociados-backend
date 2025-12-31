@@ -1586,6 +1586,47 @@ export class CollectorWalletService {
     // Total neto de cobros = cobros - reseteos
     const totalCollected = totalCollections + totalResets;
 
+    // Obtener subLoanIds únicos de las transacciones de cobro para buscar payments
+    const subLoanIds = [
+      ...new Set(
+        collectionsToday
+          .map((t) => t.subLoanId)
+          .filter((id): id is string => id !== null && id !== undefined),
+      ),
+    ];
+
+    // Obtener todos los payments del día para estos subloans
+    const paymentsMap = new Map<string, any[]>();
+    if (subLoanIds.length > 0) {
+      const payments = await this.prisma.payment.findMany({
+        where: {
+          subLoanId: { in: subLoanIds },
+          createdAt: {
+            gte: dayStart,
+            lte: dayEnd,
+          },
+        },
+        select: {
+          id: true,
+          subLoanId: true,
+          description: true,
+          amount: true,
+          paymentDate: true,
+          createdAt: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      // Agrupar payments por subLoanId
+      for (const payment of payments) {
+        const existing = paymentsMap.get(payment.subLoanId) || [];
+        existing.push(payment);
+        paymentsMap.set(payment.subLoanId, existing);
+      }
+    }
+
     // 2. PRESTADO del día (loans creados)
     const loansCreatedToday = await this.prisma.loan.findMany({
       where: {
@@ -1710,13 +1751,23 @@ export class CollectorWalletService {
         total: totalCollected, // Neto (cobros - reseteos)
         grossTotal: totalCollections, // Bruto (solo cobros)
         count: collectionsToday.length,
-        transactions: collectionsToday.map((t) => ({
-          id: t.id,
-          amount: Number(t.amount),
-          description: t.description,
-          subLoanId: t.subLoanId,
-          createdAt: t.createdAt,
-        })),
+        transactions: collectionsToday.map((t) => {
+          const payments = t.subLoanId ? paymentsMap.get(t.subLoanId) || [] : [];
+          return {
+            id: t.id,
+            amount: Number(t.amount),
+            description: t.description,
+            subLoanId: t.subLoanId,
+            createdAt: t.createdAt,
+            payments: payments.map((payment: any) => ({
+              id: payment.id,
+              description: payment.description,
+              amount: Number(payment.amount),
+              paymentDate: payment.paymentDate,
+              createdAt: payment.createdAt,
+            })),
+          };
+        }),
       },
       resets: {
         total: Math.abs(totalResets), // Mostrar como positivo para claridad

@@ -59,6 +59,18 @@ export class SubLoansService {
               },
             },
           },
+          payments: {
+            select: {
+              id: true,
+              description: true,
+              amount: true,
+              paymentDate: true,
+              createdAt: true,
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
         },
         orderBy: {
           dueDate: 'asc',

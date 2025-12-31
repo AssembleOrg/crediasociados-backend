@@ -446,9 +446,22 @@ export class CollectionRoutesService {
               include: {
                 loan: {
                   select: {
+                    id: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
+                  },
+                },
+                payments: {
+                  select: {
+                    id: true,
+                    description: true,
+                    amount: true,
+                    paymentDate: true,
+                    createdAt: true,
+                  },
+                  orderBy: {
+                    createdAt: 'desc',
                   },
                 },
               },
@@ -685,6 +698,7 @@ export class CollectionRoutesService {
               include: {
                 loan: {
                   select: {
+                    id: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -918,6 +932,7 @@ export class CollectionRoutesService {
               include: {
                 loan: {
                   select: {
+                    id: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -966,6 +981,7 @@ export class CollectionRoutesService {
               include: {
                 loan: {
                   select: {
+                    id: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -1251,6 +1267,46 @@ export class CollectionRoutesService {
     // neto = totalCollectedPayments - gastos - préstamos del día
     netAmount = totalCollectedPayments - totalExpenses - totalLoaned;
 
+    // Obtener todos los loanIds únicos de los items para calcular saldos pendientes de una vez
+    const loanIds: string[] = route.items
+      .map((item: any) => item.subLoan?.loan?.id as string | undefined)
+      .filter((id: string | undefined): id is string => typeof id === 'string' && id !== null && id !== undefined);
+    const uniqueLoanIds = Array.from(new Set(loanIds));
+
+    // Calcular saldos pendientes para todos los préstamos únicos
+    const outstandingBalancesMap = new Map<string, number>();
+    
+    if (uniqueLoanIds.length > 0) {
+      // Obtener todos los subloans de todos los préstamos únicos
+      const allSubLoans = await this.prisma.subLoan.findMany({
+        where: {
+          loanId: { in: uniqueLoanIds as string[] },
+          deletedAt: null,
+        },
+        select: {
+          loanId: true,
+          paidAmount: true,
+        },
+      });
+
+      // Agrupar por loanId y sumar paidAmount
+      const paidAmountsByLoan = new Map<string, number>();
+      for (const subLoan of allSubLoans) {
+        const current = paidAmountsByLoan.get(subLoan.loanId) || 0;
+        paidAmountsByLoan.set(subLoan.loanId, current + Number(subLoan.paidAmount || 0));
+      }
+
+      // Calcular saldo pendiente para cada préstamo
+      for (const loanId of uniqueLoanIds) {
+        const loan = route.items.find((item: any) => item.subLoan?.loan?.id === loanId)?.subLoan?.loan;
+        if (loan) {
+          const loanAmount = Number(loan.amount || 0);
+          const totalPaid = paidAmountsByLoan.get(loanId as string) || 0;
+          outstandingBalancesMap.set(loanId as string, loanAmount - totalPaid);
+        }
+      }
+    }
+
     return {
       id: route.id,
       managerId: route.managerId,
@@ -1266,31 +1322,46 @@ export class CollectionRoutesService {
       createdAt: route.createdAt,
       updatedAt: route.updatedAt,
       manager: route.manager,
-      items: route.items.map((item: any) => ({
-        id: item.id,
-        routeId: item.routeId,
-        subLoanId: item.subLoanId,
-        clientName: item.clientName,
-        clientPhone: item.clientPhone,
-        clientAddress: item.clientAddress,
-        orderIndex: item.orderIndex,
-        amountCollected: Number(item.amountCollected),
-        notes: item.notes,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        subLoan: item.subLoan
-          ? {
-              id: item.subLoan.id,
-              paymentNumber: item.subLoan.paymentNumber,
-              amount: Number(item.subLoan.amount),
-              totalAmount: Number(item.subLoan.totalAmount),
-              paidAmount: Number(item.subLoan.paidAmount),
-              status: item.subLoan.status,
-              dueDate: item.subLoan.dueDate,
-              loan: item.subLoan.loan,
-            }
-          : undefined,
-      })),
+      items: route.items.map((item: any) => {
+        const loanId = item.subLoan?.loan?.id;
+        const outstandingBalance = loanId ? outstandingBalancesMap.get(loanId) ?? null : null;
+
+        return {
+          id: item.id,
+          routeId: item.routeId,
+          subLoanId: item.subLoanId,
+          clientName: item.clientName,
+          clientPhone: item.clientPhone,
+          clientAddress: item.clientAddress,
+          orderIndex: item.orderIndex,
+          amountCollected: Number(item.amountCollected),
+          notes: item.notes,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+            subLoan: item.subLoan
+              ? {
+                  id: item.subLoan.id,
+                  paymentNumber: item.subLoan.paymentNumber,
+                  amount: Number(item.subLoan.amount),
+                  totalAmount: Number(item.subLoan.totalAmount),
+                  paidAmount: Number(item.subLoan.paidAmount),
+                  status: item.subLoan.status,
+                  dueDate: item.subLoan.dueDate,
+                  loan: item.subLoan.loan,
+                  outstandingBalance: outstandingBalance,
+                  payments: item.subLoan.payments
+                    ? item.subLoan.payments.map((payment: any) => ({
+                        id: payment.id,
+                        description: payment.description,
+                        amount: Number(payment.amount),
+                        paymentDate: payment.paymentDate,
+                        createdAt: payment.createdAt,
+                      }))
+                    : [],
+                }
+              : undefined,
+        };
+      }),
       expenses: (route.expenses || []).map((expense: any) => ({
         id: expense.id,
         routeId: expense.routeId,

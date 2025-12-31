@@ -78,6 +78,11 @@ export class AuditService {
     headers?: any;
     errorMessage?: string;
   }): Promise<void> {
+    // HTTP logging disabled - no longer persisting HTTP logs to database
+    // To re-enable, uncomment the code below
+    return;
+    
+    /* DISABLED - HTTP Log Persistence
     try {
       await this.prisma.httpLog.create({
         data: {
@@ -101,6 +106,7 @@ export class AuditService {
       // No queremos que un error en el log detenga la aplicación
       console.error('Error logging HTTP request:', error);
     }
+    */
   }
 
   async getAuditLogs(filters?: {

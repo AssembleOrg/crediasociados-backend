@@ -93,6 +93,16 @@ export class SubLoansController {
           ? Number(subLoan.loan.originalAmount)
           : subLoan.loan.originalAmount,
       },
+      // Transform payments with their descriptions
+      payments: subLoan.payments
+        ? subLoan.payments.map((payment: any) => ({
+            id: payment.id,
+            description: payment.description,
+            amount: Number(payment.amount),
+            paymentDate: payment.paymentDate,
+            createdAt: payment.createdAt,
+          }))
+        : [],
     }));
 
     return {
