@@ -1509,25 +1509,20 @@ export class CollectorWalletService {
     userId: string,
     date?: Date,
   ): Promise<any> {
-    // Calcular inicio y fin del día en GMT-3 (Argentina)
+    // Calcular inicio y fin del día en GMT-3 (Argentina) usando DateUtil
     let dayStart: Date;
     let dayEnd: Date;
 
     if (date) {
-      // Si se proporciona fecha, usarla
-      dayStart = new Date(date);
+      // Si se proporciona fecha, usar DateUtil para normalizarla
+      const dateTime = DateUtil.fromJSDate(date);
+      dayStart = DateUtil.startOfDay(dateTime).toJSDate();
+      dayEnd = DateUtil.endOfDay(dateTime).toJSDate();
     } else {
       // Si no, usar fecha actual en GMT-3
-      dayStart = new Date();
+      dayStart = DateUtil.now().startOf('day').toJSDate();
+      dayEnd = DateUtil.now().endOf('day').toJSDate();
     }
-
-    // Establecer inicio del día en GMT-3
-    // JavaScript trabaja en hora local del servidor, ajustamos a GMT-3
-    dayStart.setHours(0, 0, 0, 0);
-    
-    // Establecer fin del día en GMT-3
-    dayEnd = new Date(dayStart);
-    dayEnd.setHours(23, 59, 59, 999);
 
     // Obtener información del usuario
     const user = await this.prisma.user.findUnique({
@@ -1545,7 +1540,27 @@ export class CollectorWalletService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    // 1. COBRADO del día (de collector wallet)
+    // 1. COBRADO del día (usando payments, igual que la ruta)
+    // Calcular total cobrado real del día desde payments (igual que totalCollectedPayments de la ruta)
+    const paymentsSum = await this.prisma.payment.aggregate({
+      where: {
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        subLoan: {
+          loan: {
+            managerId: userId,
+          },
+        },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+    const totalCollectedPayments = Number(paymentsSum._sum.amount ?? 0);
+
+    // Obtener transacciones de collector wallet para el detalle (pero el total viene de payments)
     const collectorWallet = await this.getOrCreateWallet(userId);
     
     // Obtener cobros del día
@@ -1572,7 +1587,43 @@ export class CollectorWalletService {
       },
     });
 
-    // Calcular totales: cobros positivos + reseteos (que son negativos)
+    // Obtener TODOS los payments del día del manager para mostrar descripciones
+    const allPaymentsToday = await this.prisma.payment.findMany({
+      where: {
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        subLoan: {
+          loan: {
+            managerId: userId,
+          },
+        },
+      },
+      select: {
+        id: true,
+        subLoanId: true,
+        description: true,
+        amount: true,
+        paymentDate: true,
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    // Agrupar payments por subLoanId
+    const paymentsMap = new Map<string, any[]>();
+    for (const payment of allPaymentsToday) {
+      if (payment.subLoanId) {
+        const existing = paymentsMap.get(payment.subLoanId) || [];
+        existing.push(payment);
+        paymentsMap.set(payment.subLoanId, existing);
+      }
+    }
+
+    // Calcular totales de transacciones para el detalle
     const totalCollections = collectionsToday.reduce(
       (sum, t) => sum + Number(t.amount),
       0,
@@ -1583,49 +1634,8 @@ export class CollectorWalletService {
       0,
     );
     
-    // Total neto de cobros = cobros - reseteos
-    const totalCollected = totalCollections + totalResets;
-
-    // Obtener subLoanIds únicos de las transacciones de cobro para buscar payments
-    const subLoanIds = [
-      ...new Set(
-        collectionsToday
-          .map((t) => t.subLoanId)
-          .filter((id): id is string => id !== null && id !== undefined),
-      ),
-    ];
-
-    // Obtener todos los payments del día para estos subloans
-    const paymentsMap = new Map<string, any[]>();
-    if (subLoanIds.length > 0) {
-      const payments = await this.prisma.payment.findMany({
-        where: {
-          subLoanId: { in: subLoanIds },
-          createdAt: {
-            gte: dayStart,
-            lte: dayEnd,
-          },
-        },
-        select: {
-          id: true,
-          subLoanId: true,
-          description: true,
-          amount: true,
-          paymentDate: true,
-          createdAt: true,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-
-      // Agrupar payments por subLoanId
-      for (const payment of payments) {
-        const existing = paymentsMap.get(payment.subLoanId) || [];
-        existing.push(payment);
-        paymentsMap.set(payment.subLoanId, existing);
-      }
-    }
+    // Total neto de cobros = usar totalCollectedPayments (de payments) para coincidir con la ruta
+    const totalCollected = totalCollectedPayments;
 
     // 2. PRESTADO del día (loans creados)
     const loansCreatedToday = await this.prisma.loan.findMany({
@@ -1748,8 +1758,8 @@ export class CollectorWalletService {
         role: user.role,
       },
       collected: {
-        total: totalCollected, // Neto (cobros - reseteos)
-        grossTotal: totalCollections, // Bruto (solo cobros)
+        total: totalCollected, // Total de payments (igual que totalCollectedPayments de la ruta)
+        grossTotal: totalCollectedPayments, // Total de payments (bruto)
         count: collectionsToday.length,
         transactions: collectionsToday.map((t) => {
           const payments = t.subLoanId ? paymentsMap.get(t.subLoanId) || [] : [];
@@ -1799,8 +1809,8 @@ export class CollectorWalletService {
         detail: expensesDetail,
       },
       summary: {
-        totalCollected, // Neto
-        grossCollected: totalCollections, // Bruto
+        totalCollected, // Total de payments (igual que totalCollectedPayments de la ruta)
+        grossCollected: totalCollectedPayments, // Total de payments (bruto)
         totalResets: Math.abs(totalResets), // Reseteos como positivo
         totalLoaned,
         totalExpenses,

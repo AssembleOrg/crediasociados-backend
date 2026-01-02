@@ -1098,12 +1098,10 @@ export class LoansService {
   }
 
   async getTodayLoans(userId: string, userRole: UserRole) {
-    // Obtener la fecha de hoy (inicio y fin del día)
-    const today = new Date();
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+    // Obtener la fecha de hoy (inicio y fin del día) usando DateUtil (GMT-3)
+    const today = DateUtil.now();
+    const startOfDay = DateUtil.startOfDay(today).toJSDate();
+    const endOfDay = DateUtil.endOfDay(today).toJSDate();
 
     // Construir whereClause basado en el rol del usuario
     const whereClause: any = {
@@ -1177,8 +1175,8 @@ export class LoansService {
       0,
     );
 
-    // Formatear fecha para la respuesta
-    const date = today.toISOString().split('T')[0]; // YYYY-MM-DD
+    // Formatear fecha para la respuesta (usar DateUtil para consistencia)
+    const date = DateUtil.now().toFormat('yyyy-MM-dd'); // YYYY-MM-DD
 
     return {
       date,
