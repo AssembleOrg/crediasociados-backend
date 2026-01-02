@@ -53,6 +53,47 @@ export class ScheduledTasksService {
   }
 
   /**
+   * Tarea programada que se ejecuta a las 3:30 AM todos los días
+   * Cierra automáticamente todas las rutas activas previas a hoy
+   */
+  @Cron('30 3 * * *', {
+    name: 'close-yesterday-collection-routes',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
+  async closeYesterdayCollectionRoutes() {
+    try {
+      this.logger.log(
+        'Iniciando tarea programada: cerrar rutas de cobro activas previas a hoy',
+      );
+
+      const result =
+        await this.collectionRoutesService.closeAllActiveRoutesBeforeToday();
+
+      this.logger.log(
+        `Tarea completada: ${result.message} - ${result.closedRoutes} rutas cerradas`,
+      );
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        'Error en tarea programada de cierre de rutas de cobro:',
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Método para ejecutar manualmente el cierre de rutas (para testing)
+   */
+  async runCloseYesterdayRoutesManually() {
+    this.logger.log(
+      'Ejecutando manualmente la tarea de cierre de rutas de cobro previas a hoy',
+    );
+    return this.closeYesterdayCollectionRoutes();
+  }
+
+  /**
    * Tarea programada que se ejecuta a las 4:15 AM todos los días
    * Crea las rutas de cobro diarias para todos los managers
    */

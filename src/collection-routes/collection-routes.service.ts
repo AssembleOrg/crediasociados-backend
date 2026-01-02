@@ -965,6 +965,143 @@ export class CollectionRoutesService {
   }
 
   /**
+   * Cerrar automáticamente todas las rutas activas previas a hoy
+   * Este método es llamado por el cron job a las 3:30 AM GMT-3
+   */
+  async closeAllActiveRoutesBeforeToday(): Promise<{
+    closedRoutes: number;
+    message: string;
+    routes: string[];
+  }> {
+    const todayStart = DateUtil.now().startOf('day').toJSDate();
+
+    // Buscar todas las rutas activas con routeDate < hoy
+    const activeRoutes = await this.prisma.dailyCollectionRoute.findMany({
+      where: {
+        status: 'ACTIVE',
+        routeDate: {
+          lt: todayStart,
+        },
+      },
+      include: {
+        items: {
+          include: {
+            subLoan: true,
+          },
+        },
+        expenses: true,
+      },
+    });
+
+    if (activeRoutes.length === 0) {
+      return {
+        closedRoutes: 0,
+        message: 'No hay rutas activas previas a hoy para cerrar',
+        routes: [],
+      };
+    }
+
+    const closedRouteIds: string[] = [];
+    const errors: string[] = [];
+
+    for (const route of activeRoutes) {
+      try {
+        // Calcular totales actualizados (reutilizando lógica de closeRoute)
+        let totalCollected = new Decimal(0);
+        let totalExpenses = new Decimal(0);
+
+        const updatedItems: { id: string; amountCollected: Decimal }[] = [];
+
+        // Calcular total cobrado desde los subloans (paidAmount)
+        for (const item of route.items) {
+          const itemCollected = item?.subLoan?.paidAmount ?? new Decimal(0);
+          totalCollected = totalCollected.add(itemCollected);
+
+          updatedItems.push({
+            id: item.id,
+            amountCollected: itemCollected,
+          });
+        }
+
+        // Calcular total de gastos desde los expenses de la ruta
+        if (route.expenses) {
+          for (const expense of route.expenses) {
+            totalExpenses = totalExpenses.add(expense.amount);
+          }
+        }
+
+        const netAmount = totalCollected.sub(totalExpenses);
+
+        // Calcular total "real" cobrado del día desde payments
+        const dayStart = DateUtil.startOfDay(
+          DateUtil.fromJSDate(route.routeDate),
+        ).toJSDate();
+        const dayEnd = DateUtil.endOfDay(
+          DateUtil.fromJSDate(route.routeDate),
+        ).toJSDate();
+
+        const paymentsSum = await this.prisma.payment.aggregate({
+          where: {
+            createdAt: {
+              gte: dayStart,
+              lte: dayEnd,
+            },
+            subLoan: {
+              loan: {
+                managerId: route.managerId,
+              },
+            },
+          },
+          _sum: {
+            amount: true,
+          },
+        });
+        const totalCollectedPayments =
+          paymentsSum._sum.amount ?? new Decimal(0);
+
+        // Actualizar la ruta y sus items en una transacción
+        await this.prisma.$transaction([
+          ...updatedItems.map((item) =>
+            this.prisma.collectionRouteItem.update({
+              where: { id: item.id },
+              data: {
+                amountCollected: item.amountCollected,
+              },
+            }),
+          ),
+          this.prisma.dailyCollectionRoute.update({
+            where: { id: route.id },
+            data: {
+              status: 'CLOSED',
+              totalCollected,
+              totalCollectedPayments,
+              totalExpenses,
+              netAmount,
+              notes: 'Cerrado automáticamente por el sistema',
+              closedAt: DateUtil.now().toJSDate(),
+            },
+          }),
+        ]);
+
+        closedRouteIds.push(route.id);
+      } catch (error) {
+        errors.push(`Error cerrando ruta ${route.id}: ${error.message}`);
+      }
+    }
+
+    const message =
+      errors.length > 0
+        ? `Se cerraron ${closedRouteIds.length} rutas con ${errors.length} errores: ${errors.join(', ')}`
+        : `Se cerraron ${closedRouteIds.length} rutas exitosamente`;
+
+    return {
+      closedRoutes: closedRouteIds.length,
+      message,
+      routes: closedRouteIds,
+    };
+  }
+
+  /**
    * Obtener una ruta específica por ID
    */
   async getRouteById(

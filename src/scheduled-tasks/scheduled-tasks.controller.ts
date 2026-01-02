@@ -37,6 +37,33 @@ export class ScheduledTasksController {
     return result;
   }
 
+  @Post('close-yesterday-routes')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Cerrar rutas de cobro activas previas a hoy',
+    description:
+      'Cierra automáticamente todas las rutas de cobro activas previas a la fecha actual. Ejecuta manualmente la tarea que normalmente se ejecuta a las 3:30 AM (solo para admins)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Rutas de cobro cerradas exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        closedRoutes: { type: 'number', description: 'Cantidad de rutas cerradas' },
+        message: { type: 'string', description: 'Mensaje descriptivo del resultado' },
+        routes: { type: 'array', items: { type: 'string' }, description: 'IDs de las rutas cerradas' },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Prohibido - Solo administradores' })
+  async runCloseYesterdayRoutesManually() {
+    const result =
+      await this.scheduledTasksService.runCloseYesterdayRoutesManually();
+    return result;
+  }
+
   @Post('create-daily-collection-routes')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({
