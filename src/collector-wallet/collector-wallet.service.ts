@@ -2377,7 +2377,8 @@ export class CollectorWalletService {
 
   /**
    * Obtener sumatoria de cobros realizados a subpréstamos en un rango de fechas
-   * Solo cuenta transacciones de tipo COLLECTION
+   * Incluye transacciones de tipo COLLECTION y PAYMENT_RESET
+   * PAYMENT_RESET tiene amount negativo, así que al sumar se resta automáticamente
    */
   async getCollectionsSummary(
     managerId: string,
@@ -2424,11 +2425,17 @@ export class CollectorWalletService {
       throw new NotFoundException('Wallet de cobros no encontrada');
     }
 
-    // Buscar transacciones de tipo COLLECTION en el rango de fechas
+    // Buscar transacciones de tipo COLLECTION y PAYMENT_RESET en el rango de fechas
+    // PAYMENT_RESET tiene amount negativo, así que al sumar se resta automáticamente
     const transactions = await this.prisma.collectorWalletTransaction.findMany({
       where: {
         walletId: wallet.id,
-        type: CollectorWalletTransactionType.COLLECTION,
+        type: {
+          in: [
+            CollectorWalletTransactionType.COLLECTION,
+            CollectorWalletTransactionType.PAYMENT_RESET,
+          ],
+        },
         createdAt: {
           gte: startDate.toJSDate(),
           lte: endDate.toJSDate(),
@@ -2436,6 +2443,7 @@ export class CollectorWalletService {
       },
       select: {
         id: true,
+        type: true,
         amount: true,
         currency: true,
         description: true,
@@ -2443,8 +2451,22 @@ export class CollectorWalletService {
       },
     });
 
-    // Sumar todos los amounts
+    // Separar transacciones por tipo para calcular totales
+    const collections = transactions.filter(
+      (tx) => tx.type === CollectorWalletTransactionType.COLLECTION,
+    );
+    const resets = transactions.filter(
+      (tx) => tx.type === CollectorWalletTransactionType.PAYMENT_RESET,
+    );
+
+    // Sumar todos los amounts (PAYMENT_RESET tiene amount negativo, así que se resta automáticamente)
     const totalAmount = transactions.reduce(
+      (sum, tx) => sum + Number(tx.amount),
+      0,
+    );
+
+    // Calcular total de reseteos (será negativo)
+    const resetAmount = resets.reduce(
       (sum, tx) => sum + Number(tx.amount),
       0,
     );
@@ -2455,7 +2477,9 @@ export class CollectorWalletService {
       endDate: endDate.toFormat('dd/MM/yyyy'),
       totalAmount: Number(totalAmount.toFixed(2)),
       currency: transactions.length > 0 ? transactions[0].currency : 'ARS',
-      totalCollections: transactions.length,
+      totalCollections: collections.length,
+      totalResets: resets.length,
+      resetAmount: Number(resetAmount.toFixed(2)),
     };
   }
 }

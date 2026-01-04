@@ -537,9 +537,9 @@ export class CollectorWalletController {
   @ApiOperation({
     summary: 'Obtener sumatoria de cobros en un rango de fechas',
     description:
-      'Devuelve la sumatoria de todos los cobros realizados a subpréstamos ' +
+      'Devuelve la sumatoria neta de todos los cobros realizados a subpréstamos ' +
       'en un rango de fechas para un manager específico. ' +
-      'Solo cuenta transacciones de tipo COLLECTION. ' +
+      'Incluye transacciones de tipo COLLECTION y PAYMENT_RESET (los reseteos se restan automáticamente). ' +
       'Las fechas deben estar en formato DD/MM/YYYY y se interpretan en zona horaria de Buenos Aires (GMT-3).',
   })
   @ApiResponse({
