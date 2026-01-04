@@ -1196,15 +1196,9 @@ export class CollectorWalletService {
       .filter((t) => t.type === CollectorWalletTransactionType.WITHDRAWAL)
       .reduce((sum, t) => sum + Number(t.amount), 0);
 
-    const totalLoanedFromTransactions = collectorWalletTransactions
-      .filter((t) => t.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT)
-      .reduce((sum, t) => sum + Number(t.amount), 0);
-
     const totalCashAdjustments = collectorWalletTransactions
       .filter((t) => t.type === CollectorWalletTransactionType.CASH_ADJUSTMENT)
       .reduce((sum, t) => sum + Number(t.amount), 0);
-
-    const netCollectorWallet = totalCollections - totalWithdrawals - totalLoanedFromTransactions + totalCashAdjustments;
 
     // 3. Obtener todos los pagos realizados por este cobrador en el período
     const paymentsRegistered = await this.prisma.payment.findMany({
@@ -1402,14 +1396,36 @@ export class CollectorWalletService {
       0,
     );
 
+    // Filtrar transacciones LOAN_DISBURSEMENT para solo contar aquellas cuyo préstamo aún existe
+    // Extraer loanTrack de la descripción (formato: "Préstamo CREDITO-2026-00046 - Desembolso")
+    const validLoanTracks = new Set(loansCreated.map((loan) => loan.loanTrack));
+    const totalLoanedFromTransactions = collectorWalletTransactions
+      .filter((t) => {
+        if (t.type !== CollectorWalletTransactionType.LOAN_DISBURSEMENT) {
+          return false;
+        }
+        // Extraer loanTrack de la descripción
+        // Formato esperado: "Préstamo CREDITO-XXXX-XXXXX - ..." o "Préstamo CREDITO-XXXX-XXXXX"
+        // El regex busca "Préstamo" seguido de espacios opcionales y luego el loanTrack
+        const match = t.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+        if (match && match[1]) {
+          const loanTrack = match[1];
+          return validLoanTracks.has(loanTrack);
+        }
+        return false;
+      })
+      .reduce((sum, t) => sum + Number(t.amount), 0);
+
+    const netCollectorWallet = totalCollections - totalWithdrawals - totalLoanedFromTransactions + totalCashAdjustments;
+
     // 8. Calcular comisión automática (solo en base a lo cobrado)
     // Nota: totalWithdrawals ya fue calculado anteriormente
     const commissionPercentage = user?.commission ? Number(user.commission) : 0;
     const commissionAmount = (totalAmountCollected * commissionPercentage) / 100;
 
     // 9. Calcular neto: cobrado - gastado - prestado - retirado + ajustes de caja
-    // Usar totalLoanedFromTransactions (de transacciones) en lugar de totalLoaned (de préstamos creados)
-    // para mantener consistencia con el balance de la wallet
+    // Usar totalLoanedFromTransactions (de transacciones filtradas, solo préstamos que aún existen)
+    // para mantener consistencia con el balance de la wallet y excluir préstamos eliminados
     const neto = totalAmountCollected - totalExpenses - totalLoanedFromTransactions - totalWithdrawals + totalCashAdjustments;
 
     // Construir respuesta - Formatear fechas del período en zona horaria Buenos Aires para claridad
