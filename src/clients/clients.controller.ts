@@ -141,13 +141,23 @@ export class ClientsController {
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search client by DNI or CUIT' })
+  @ApiOperation({ 
+    summary: 'Search client by DNI, CUIT, or name',
+    description: 'Search for a client by DNI, CUIT, or name (case-insensitive, partial matches). At least one parameter must be provided.'
+  })
   @ApiQuery({ name: 'dni', required: false, type: String, example: '12345678' })
   @ApiQuery({
     name: 'cuit',
     required: false,
     type: String,
     example: '20-12345678-9',
+  })
+  @ApiQuery({
+    name: 'name',
+    required: false,
+    type: String,
+    example: 'car',
+    description: 'Search by client name (case-insensitive, partial match). Example: "car" matches "CAR", "Car", "Carlos", etc.',
   })
   @ApiResponse({
     status: 200,
@@ -164,14 +174,15 @@ export class ClientsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad Request - Missing DNI or CUIT',
+    description: 'Bad Request - Missing DNI, CUIT, or name',
   })
   @ApiResponse({ status: 404, description: 'Client not found' })
   async searchByDniOrCuit(
     @Query('dni') dni?: string,
     @Query('cuit') cuit?: string,
+    @Query('name') name?: string,
   ) {
-    const result = await this.clientsService.searchByDniOrCuit(dni, cuit);
+    const result = await this.clientsService.searchByDniOrCuit(dni, cuit, name);
     return result;
   }
 

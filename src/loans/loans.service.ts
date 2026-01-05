@@ -292,6 +292,19 @@ export class LoansService {
             createdAt: true,
             updatedAt: true,
             deletedAt: true,
+            payments: {
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                paymentDate: true,
+                description: true,
+                createdAt: true,
+              },
+              orderBy: {
+                createdAt: 'desc',
+              },
+            },
           },
         },
       },
@@ -366,6 +379,19 @@ export class LoansService {
             createdAt: true,
             updatedAt: true,
             deletedAt: true,
+            payments: {
+              select: {
+                id: true,
+                amount: true,
+                currency: true,
+                paymentDate: true,
+                description: true,
+                createdAt: true,
+              },
+              orderBy: {
+                createdAt: 'desc',
+              },
+            },
           },
         },
       },

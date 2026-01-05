@@ -263,6 +263,10 @@ export class LoansController {
             paidAmount: subLoan.paidAmount
               ? Number(subLoan.paidAmount)
               : subLoan.paidAmount,
+            payments: subLoan.payments?.map((payment) => ({
+              ...payment,
+              amount: payment.amount ? Number(payment.amount) : payment.amount,
+            })) || [],
           })) || [],
       };
       return transformedLoan;

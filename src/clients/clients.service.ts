@@ -437,37 +437,72 @@ export class ClientsService {
     return { message: 'Cliente eliminado exitosamente' };
   }
 
-  async searchByDniOrCuit(dni?: string, cuit?: string) {
-    if (!dni && !cuit) {
+  async searchByDniOrCuit(dni?: string, cuit?: string, name?: string) {
+    if (!dni && !cuit && !name) {
       throw new BadRequestException(
-        'Debe proporcionar DNI o CUIT para la búsqueda',
+        'Debe proporcionar DNI, CUIT o nombre para la búsqueda',
       );
     }
 
-    const whereClause: any = { deletedAt: null };
-    if (dni) whereClause.dni = dni;
-    if (cuit) whereClause.cuit = cuit;
-
-    const client = await this.prisma.client.findFirst({
-      where: whereClause,
-      include: {
-        managers: {
-          where: { deletedAt: null },
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-                role: true,
+    // Función auxiliar para realizar la búsqueda con el include común
+    const searchClient = async (whereClause: any) => {
+      return await this.prisma.client.findFirst({
+        where: { ...whereClause, deletedAt: null },
+        include: {
+          managers: {
+            where: { deletedAt: null },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
+                  role: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
+    };
 
-    return client;
+    let client: any = null;
+
+    // 1. Buscar primero por nombre (si se proporciona)
+    if (name) {
+      client = await searchClient({
+        fullName: {
+          contains: name,
+          mode: 'insensitive',
+        },
+      });
+      if (client) {
+        return client;
+      }
+    }
+
+    // 2. Si no se encontró por nombre, buscar por DNI (si se proporciona)
+    if (dni) {
+      client = await searchClient({
+        dni: dni,
+      });
+      if (client) {
+        return client;
+      }
+    }
+
+    // 3. Si no se encontró por DNI, buscar por CUIT (si se proporciona)
+    if (cuit) {
+      client = await searchClient({
+        cuit: cuit,
+      });
+      if (client) {
+        return client;
+      }
+    }
+
+    // Si no se encontró nada después de todas las búsquedas
+    throw new NotFoundException('Cliente no encontrado');
   }
 
   private async getManagedClientIds(userId: string): Promise<string[]> {

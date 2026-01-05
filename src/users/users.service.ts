@@ -1001,6 +1001,19 @@ export class UsersService {
               totalAmount: true,
               dueDate: true,
               paidAmount: true,
+              payments: {
+                select: {
+                  id: true,
+                  amount: true,
+                  currency: true,
+                  paymentDate: true,
+                  description: true,
+                  createdAt: true,
+                },
+                orderBy: {
+                  createdAt: 'desc',
+                },
+              },
             },
           },
         },
