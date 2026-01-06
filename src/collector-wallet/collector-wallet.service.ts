@@ -2079,23 +2079,78 @@ export class CollectorWalletService {
       }),
     ]);
 
+    // Obtener payments para transacciones COLLECTION que tienen subLoanId
+    const collectionSubLoanIds = transactions
+      .filter((t) => t.type === CollectorWalletTransactionType.COLLECTION && t.subLoanId)
+      .map((t) => t.subLoanId!);
+
+    const paymentsBySubLoanId = new Map<string, any[]>();
+    if (collectionSubLoanIds.length > 0) {
+      const payments = await this.prisma.payment.findMany({
+        where: {
+          subLoanId: { in: collectionSubLoanIds },
+        },
+        select: {
+          id: true,
+          subLoanId: true,
+          amount: true,
+          description: true,
+          paymentDate: true,
+          createdAt: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      // Agrupar payments por subLoanId
+      for (const payment of payments) {
+        if (payment.subLoanId) {
+          if (!paymentsBySubLoanId.has(payment.subLoanId)) {
+            paymentsBySubLoanId.set(payment.subLoanId, []);
+          }
+          paymentsBySubLoanId.get(payment.subLoanId)!.push({
+            id: payment.id,
+            amount: Number(payment.amount),
+            description: payment.description,
+            paymentDate: payment.paymentDate,
+            createdAt: payment.createdAt,
+          });
+        }
+      }
+    }
+
     // Recalcular el balance actual basándose en todas las transacciones (no solo las filtradas)
     // Esto asegura que el balance sea correcto incluso si hay filtros aplicados
     const recalculatedBalance = await this.recalculateBalance(managerId);
     const currentBalance = recalculatedBalance.balance;
 
     return {
-      transactions: transactions.map((t) => ({
-        id: t.id,
-        type: t.type,
-        amount: Number(t.amount),
-        currency: t.currency,
-        description: t.description,
-        balanceBefore: Number(t.balanceBefore),
-        balanceAfter: Number(t.balanceAfter),
-        subLoanId: t.subLoanId,
-        createdAt: t.createdAt,
-      })),
+      transactions: transactions.map((t) => {
+        const transactionData: any = {
+          id: t.id,
+          type: t.type,
+          amount: Number(t.amount),
+          currency: t.currency,
+          description: t.description,
+          balanceBefore: Number(t.balanceBefore),
+          balanceAfter: Number(t.balanceAfter),
+          subLoanId: t.subLoanId,
+          createdAt: t.createdAt,
+        };
+
+        // Para transacciones COLLECTION, agregar información de payments
+        if (t.type === CollectorWalletTransactionType.COLLECTION && t.subLoanId) {
+          const payments = paymentsBySubLoanId.get(t.subLoanId) || [];
+          
+          // Agregar la descripción del payment más reciente
+          transactionData.paymentDescription = payments[0]?.description || null;
+          // Agregar todos los payments del subLoan
+          transactionData.payments = payments;
+        }
+
+        return transactionData;
+      }),
       pagination: {
         page,
         limit,
