@@ -473,14 +473,15 @@ export class PaymentsService {
         }
       }
 
-      // 3. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING o PARTIAL)
+      // 3. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING, PARTIAL o OVERDUE)
       // El excedente restante se usa para adelantar pagos de cuotas posteriores
+      // Incluimos OVERDUE para que se paguen las cuotas vencidas de forma contigua
       if (remainingAmount > 0) {
         const nextSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
             paymentNumber: { gt: subLoan.paymentNumber },
-            status: { in: [SubLoanStatus.PENDING, SubLoanStatus.PARTIAL] },
+            status: { in: [SubLoanStatus.PENDING, SubLoanStatus.PARTIAL, SubLoanStatus.OVERDUE] },
             deletedAt: null,
           },
           orderBy: { paymentNumber: 'asc' },
