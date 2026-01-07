@@ -178,11 +178,18 @@ export class ClientsController {
   })
   @ApiResponse({ status: 404, description: 'Client not found' })
   async searchByDniOrCuit(
+    @CurrentUser() currentUser: any,
     @Query('dni') dni?: string,
     @Query('cuit') cuit?: string,
     @Query('name') name?: string,
   ) {
-    const result = await this.clientsService.searchByDniOrCuit(dni, cuit, name);
+    const result = await this.clientsService.searchByDniOrCuit(
+      dni,
+      cuit,
+      name,
+      currentUser.id,
+      currentUser.role,
+    );
     return result;
   }
 

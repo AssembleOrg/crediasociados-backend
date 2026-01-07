@@ -437,7 +437,13 @@ export class ClientsService {
     return { message: 'Cliente eliminado exitosamente' };
   }
 
-  async searchByDniOrCuit(dni?: string, cuit?: string, name?: string) {
+  async searchByDniOrCuit(
+    dni?: string,
+    cuit?: string,
+    name?: string,
+    userId?: string,
+    userRole?: UserRole,
+  ) {
     if (!dni && !cuit && !name) {
       throw new BadRequestException(
         'Debe proporcionar DNI, CUIT o nombre para la búsqueda',
@@ -466,6 +472,38 @@ export class ClientsService {
       });
     };
 
+    // Función auxiliar para validar acceso al cliente
+    const validateAccess = async (client: any): Promise<boolean> => {
+      if (!client) return false;
+
+      // ADMIN y SUPERADMIN pueden acceder a todos los clientes
+      if (userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN) {
+        return true;
+      }
+
+      // MANAGER solo puede acceder a sus propios clientes
+      if (userRole === UserRole.MANAGER && userId) {
+        const isManaged = client.managers.some(
+          (manager: ClientManager) =>
+            manager.userId === userId && !manager.deletedAt,
+        );
+        return isManaged;
+      }
+
+      // SUBADMIN puede acceder a clientes de sus managers
+      if (userRole === UserRole.SUBADMIN && userId) {
+        const managedUserIds = await this.getManagedUserIds(userId);
+        const isManagedBySubordinate = client.managers.some(
+          (manager: ClientManager) =>
+            managedUserIds.includes(manager.userId) && !manager.deletedAt,
+        );
+        return isManagedBySubordinate;
+      }
+
+      // Si no hay userId o userRole, no permitir acceso
+      return false;
+    };
+
     let client: any = null;
 
     // 1. Buscar primero por nombre (si se proporciona)
@@ -476,8 +514,10 @@ export class ClientsService {
           mode: 'insensitive',
         },
       });
-      if (client) {
+      if (client && (await validateAccess(client))) {
         return client;
+      } else if (client) {
+        client = null; // Continuar buscando
       }
     }
 
@@ -486,8 +526,10 @@ export class ClientsService {
       client = await searchClient({
         dni: dni,
       });
-      if (client) {
+      if (client && (await validateAccess(client))) {
         return client;
+      } else if (client) {
+        client = null; // Continuar buscando
       }
     }
 
@@ -496,8 +538,10 @@ export class ClientsService {
       client = await searchClient({
         cuit: cuit,
       });
-      if (client) {
+      if (client && (await validateAccess(client))) {
         return client;
+      } else if (client) {
+        client = null; // Continuar buscando
       }
     }
 
