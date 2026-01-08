@@ -634,6 +634,74 @@ export class PaymentsService {
       timeout: 30000, // 30 segundos máximo de ejecución de la transacción
     });
 
+    // Obtener todos los subLoans del préstamo actualizados después de la transacción
+    const allSubLoans = await this.prisma.subLoan.findMany({
+      where: {
+        loanId: subLoan.loanId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        paymentNumber: true,
+        amount: true,
+        totalAmount: true,
+        status: true,
+        dueDate: true,
+        paidDate: true,
+        paidAmount: true,
+        daysOverdue: true,
+      },
+      orderBy: {
+        paymentNumber: 'asc',
+      },
+    });
+
+    // Calcular estadísticas del préstamo
+    const montoPrestado = Number(subLoan.loan.originalAmount);
+    const totalADevolver = Number(subLoan.loan.amount);
+    
+    let totalPendiente = 0;
+    let saldoPagadoTotal = 0;
+    let cuotasPagadasTotales = 0;
+    let cuotasPagadasParciales = 0;
+    let cuotasNoPagadas = 0;
+
+    const subLoansDetail = allSubLoans.map((sl) => {
+      const paidAmount = Number(sl.paidAmount);
+      const totalAmount = Number(sl.totalAmount);
+      const pendingAmount = Math.max(0, totalAmount - paidAmount);
+
+      saldoPagadoTotal += paidAmount;
+
+      if (sl.status === SubLoanStatus.PAID) {
+        cuotasPagadasTotales++;
+      } else if (sl.status === SubLoanStatus.PARTIAL) {
+        cuotasPagadasParciales++;
+        totalPendiente += pendingAmount;
+      } else if (
+        sl.status === SubLoanStatus.PENDING ||
+        sl.status === SubLoanStatus.OVERDUE
+      ) {
+        cuotasNoPagadas++;
+        totalPendiente += pendingAmount;
+      }
+
+      return {
+        id: sl.id,
+        paymentNumber: sl.paymentNumber,
+        amount: Number(sl.amount),
+        totalAmount: totalAmount,
+        status: sl.status,
+        dueDate: sl.dueDate,
+        paidDate: sl.paidDate,
+        paidAmount: paidAmount,
+        pendingAmount: pendingAmount,
+        daysOverdue: sl.daysOverdue,
+      };
+    });
+
+    const totalCuotas = allSubLoans.length;
+
     return {
       payment: {
         ...result.payment,
@@ -650,6 +718,30 @@ export class PaymentsService {
           Number(result.subLoan.paidAmount),
       },
       distributedPayments: result.distributedPayments,
+      loan: {
+        id: subLoan.loan.id,
+        loanTrack: subLoan.loan.loanTrack,
+        amount: totalADevolver,
+        originalAmount: montoPrestado,
+        currency: subLoan.loan.currency,
+        client: {
+          id: subLoan.loan.client.id,
+          fullName: subLoan.loan.client.fullName,
+          dni: subLoan.loan.client.dni,
+          cuit: subLoan.loan.client.cuit,
+        },
+      },
+      loanSummary: {
+        montoPrestado: montoPrestado,
+        totalADevolver: totalADevolver,
+        totalPendiente: Number(totalPendiente.toFixed(2)),
+        saldoPagadoTotal: Number(saldoPagadoTotal.toFixed(2)),
+        totalCuotas: totalCuotas,
+        cuotasPagadasTotales: cuotasPagadasTotales,
+        cuotasPagadasParciales: cuotasPagadasParciales,
+        cuotasNoPagadas: cuotasNoPagadas,
+      },
+      subLoans: subLoansDetail,
     };
   }
 
