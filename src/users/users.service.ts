@@ -455,40 +455,11 @@ export class UsersService {
     // Recalcular balances de wallets de cobros para cada manager
     const usersWithRecalculatedBalances = await Promise.all(
       createdUsers.map(async (user) => {
-        let collectorWalletBalance = 0;
-        
-        // Si es MANAGER, recalcular balance de su wallet de cobros
-        if (user.role === 'MANAGER' && user.collectorWallet) {
-          // Recalcular balance desde transacciones
-          const transactions = await this.prisma.collectorWalletTransaction.findMany({
-            where: { walletId: user.collectorWallet.id },
-            orderBy: { createdAt: 'asc' },
-          });
-
-          let calculatedBalance = 0;
-          for (const transaction of transactions) {
-            if (transaction.type === 'COLLECTION') {
-              calculatedBalance += Number(transaction.amount);
-            } else if (transaction.type === 'WITHDRAWAL') {
-              calculatedBalance -= Number(transaction.amount);
-            }
-          }
-
-          collectorWalletBalance = calculatedBalance;
-
-          // Si hay discrepancia, actualizar el balance almacenado
-          const storedBalance = Number(user.collectorWallet.balance);
-          if (Math.abs(calculatedBalance - storedBalance) > 0.01) {
-            await this.prisma.collectorWallet.update({
-              where: { id: user.collectorWallet.id },
-              data: {
-                balance: calculatedBalance,
-              },
-            });
-          }
-        } else if (user.collectorWallet) {
-          collectorWalletBalance = Number(user.collectorWallet.balance);
-        }
+        // Usar el balance almacenado directamente
+        // El método recalculateBalance del CollectorWalletService se asegura de mantenerlo sincronizado
+        const collectorWalletBalance = user.collectorWallet
+          ? Number(user.collectorWallet.balance)
+          : 0;
 
         const response = convertPrismaUserToResponse(user);
         return {

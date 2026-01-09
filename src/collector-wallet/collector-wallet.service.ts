@@ -50,43 +50,26 @@ export class CollectorWalletService {
   }
 
   /**
-   * Recalcular balance basándose en las transacciones
+   * Recalcular balance basándose en la última transacción
+   * El balance correcto es el balanceAfter de la última transacción
    */
   async recalculateBalance(userId: string): Promise<any> {
     const wallet = await this.getOrCreateWallet(userId);
 
-    // Obtener todas las transacciones ordenadas por fecha (sin límite de fechas)
-    const transactions = await this.prisma.collectorWalletTransaction.findMany({
+    // Obtener la última transacción para usar su balanceAfter como fuente de verdad
+    const lastTransaction = await this.prisma.collectorWalletTransaction.findFirst({
       where: { walletId: wallet.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
     });
 
-    // Calcular balance basándose en las transacciones
-    // PAYMENT_RESET tiene amount negativo, así que se suma directamente (ya que amount es negativo, sumar es restar)
-    let calculatedBalance = 0;
-    for (const transaction of transactions) {
-      if (
-        transaction.type === CollectorWalletTransactionType.COLLECTION ||
-        transaction.type === CollectorWalletTransactionType.CASH_ADJUSTMENT ||
-        transaction.type === CollectorWalletTransactionType.PAYMENT_RESET
-      ) {
-        // COLLECTION y CASH_ADJUSTMENT tienen amount positivo, PAYMENT_RESET tiene amount negativo
-        // Al sumar directamente, PAYMENT_RESET resta correctamente
-        calculatedBalance += Number(transaction.amount);
-      } else if (
-        transaction.type === CollectorWalletTransactionType.WITHDRAWAL ||
-        transaction.type === CollectorWalletTransactionType.ROUTE_EXPENSE ||
-        transaction.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT
-      ) {
-        calculatedBalance -= Number(transaction.amount);
-      }
-    }
-
-    // Si el balance calculado es diferente al almacenado, actualizarlo
+    // Si no hay transacciones, el balance debería ser 0
+    const calculatedBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
     const storedBalance = Number(wallet.balance);
+
+    // Si el balance almacenado es diferente al de la última transacción, actualizarlo
     if (Math.abs(calculatedBalance - storedBalance) > 0.01) {
       this.logger.warn(
-        `Balance desincronizado para usuario ${userId}. Almacenado: ${storedBalance}, Calculado: ${calculatedBalance}. Actualizando...`,
+        `Balance desincronizado para usuario ${userId}. Almacenado: ${storedBalance}, Última transacción: ${calculatedBalance}. Actualizando...`,
       );
 
       await this.prisma.collectorWallet.update({
@@ -117,7 +100,7 @@ export class CollectorWalletService {
 
   /**
    * Obtener balance agregado de todos los managers de un SUBADMIN
-   * Calcula el balance total basándose en TODAS las transacciones (sin límite de fechas)
+   * Suma los balances de las wallets de cada manager
    */
   async getSubadminAggregatedBalance(userId: string): Promise<any> {
     // Obtener todos los managers creados por este SUBADMIN
@@ -142,17 +125,15 @@ export class CollectorWalletService {
       };
     }
 
-    // Obtener todas las wallets de los managers
+    // Obtener todas las wallets de los managers con sus balances
     const wallets = await this.prisma.collectorWallet.findMany({
       where: {
         userId: { in: managedUserIds },
       },
-      select: { id: true },
+      select: { id: true, balance: true },
     });
 
-    const walletIds = wallets.map((w) => w.id);
-
-    if (walletIds.length === 0) {
+    if (wallets.length === 0) {
       return {
         walletId: null,
         balance: 0,
@@ -162,31 +143,10 @@ export class CollectorWalletService {
       };
     }
 
-    // Obtener TODAS las transacciones de todos los managers (sin límite de fechas)
-    const transactions = await this.prisma.collectorWalletTransaction.findMany({
-      where: { walletId: { in: walletIds } },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    // Calcular balance total basándose en todas las transacciones
-    // PAYMENT_RESET tiene amount negativo, así que se suma directamente (ya que amount es negativo, sumar es restar)
+    // Sumar los balances de todas las wallets
     let totalBalance = 0;
-    for (const transaction of transactions) {
-      if (
-        transaction.type === CollectorWalletTransactionType.COLLECTION ||
-        transaction.type === CollectorWalletTransactionType.CASH_ADJUSTMENT ||
-        transaction.type === CollectorWalletTransactionType.PAYMENT_RESET
-      ) {
-        // COLLECTION y CASH_ADJUSTMENT tienen amount positivo, PAYMENT_RESET tiene amount negativo
-        // Al sumar directamente, PAYMENT_RESET resta correctamente
-        totalBalance += Number(transaction.amount);
-      } else if (
-        transaction.type === CollectorWalletTransactionType.WITHDRAWAL ||
-        transaction.type === CollectorWalletTransactionType.ROUTE_EXPENSE ||
-        transaction.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT
-      ) {
-        totalBalance -= Number(transaction.amount);
-      }
+    for (const wallet of wallets) {
+      totalBalance += Number(wallet.balance);
     }
 
     return {
@@ -195,7 +155,6 @@ export class CollectorWalletService {
       currency: 'ARS',
       updatedAt: new Date(),
       managersCount: managedUserIds.length,
-      transactionsCount: transactions.length,
     };
   }
 
@@ -1196,8 +1155,17 @@ export class CollectorWalletService {
       .filter((t) => t.type === CollectorWalletTransactionType.WITHDRAWAL)
       .reduce((sum, t) => sum + Number(t.amount), 0);
 
+    // Filtrar CASH_ADJUSTMENT excluyendo correcciones técnicas (devoluciones de préstamos y correcciones de saldo)
     const totalCashAdjustments = collectorWalletTransactions
-      .filter((t) => t.type === CollectorWalletTransactionType.CASH_ADJUSTMENT)
+      .filter((t) => {
+        if (t.type !== CollectorWalletTransactionType.CASH_ADJUSTMENT) return false;
+        // Excluir correcciones técnicas por descripción
+        const desc = t.description.toLowerCase();
+        if (desc.includes('devolución desembolso')) return false;
+        if (desc.includes('corrección de saldo')) return false;
+        if (desc.includes('reconstrucción de movimiento eliminado')) return false;
+        return true;
+      })
       .reduce((sum, t) => sum + Number(t.amount), 0);
 
     // 3. Obtener todos los pagos realizados por este cobrador en el período
@@ -1366,7 +1334,7 @@ export class CollectorWalletService {
       });
     });
 
-    // 7. Obtener préstamos creados en el período
+    // 7. Obtener préstamos creados en el período (para mostrar en el reporte)
     const loansCreated = await this.prisma.loan.findMany({
       where: {
         createdAt: {
@@ -1396,9 +1364,30 @@ export class CollectorWalletService {
       0,
     );
 
+    // 7b. Obtener TODOS los préstamos existentes (no eliminados) del manager
+    // Esto es necesario para validar las transacciones LOAN_DISBURSEMENT,
+    // ya que pueden ser de préstamos creados antes del período pero con transacciones en el período
+    const allExistingLoans = await this.prisma.loan.findMany({
+      where: {
+        client: {
+          managers: {
+            some: {
+              userId: targetUserId,
+              deletedAt: null,
+            },
+          },
+        },
+        deletedAt: null,
+      },
+      select: {
+        loanTrack: true,
+      },
+    });
+
     // Filtrar transacciones LOAN_DISBURSEMENT para solo contar aquellas cuyo préstamo aún existe
     // Extraer loanTrack de la descripción (formato: "Préstamo CREDITO-2026-00046 - Desembolso")
-    const validLoanTracks = new Set(loansCreated.map((loan) => loan.loanTrack));
+    // IMPORTANTE: Usar todos los préstamos existentes, no solo los del período
+    const validLoanTracks = new Set(allExistingLoans.map((loan) => loan.loanTrack));
     const totalLoanedFromTransactions = collectorWalletTransactions
       .filter((t) => {
         if (t.type !== CollectorWalletTransactionType.LOAN_DISBURSEMENT) {
@@ -2120,10 +2109,9 @@ export class CollectorWalletService {
       }
     }
 
-    // Recalcular el balance actual basándose en todas las transacciones (no solo las filtradas)
-    // Esto asegura que el balance sea correcto incluso si hay filtros aplicados
-    const recalculatedBalance = await this.recalculateBalance(managerId);
-    const currentBalance = recalculatedBalance.balance;
+    // Obtener el balance actual de la wallet
+    // El balance ya está sincronizado y es más eficiente que recalcular desde cero
+    const currentBalance = Number(wallet.balance);
 
     return {
       transactions: transactions.map((t) => {
@@ -2164,6 +2152,315 @@ export class CollectorWalletService {
         balance: currentBalance,
         currency: wallet.currency,
       },
+    };
+  }
+
+  /**
+   * Trackear transacciones LOAN_DISBURSEMENT para detectar discrepancias
+   * Identifica transacciones de préstamos que fueron eliminados (hard delete)
+   */
+  async trackLoanDisbursements(managerId?: string): Promise<any> {
+    // Obtener todas las transacciones LOAN_DISBURSEMENT
+    const whereClause: any = {
+      type: CollectorWalletTransactionType.LOAN_DISBURSEMENT,
+    };
+
+    if (managerId) {
+      const wallet = await this.getOrCreateWallet(managerId);
+      whereClause.walletId = wallet.id;
+    }
+
+    const disbursements = await this.prisma.collectorWalletTransaction.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        walletId: true,
+        userId: true,
+        amount: true,
+        currency: true,
+        description: true,
+        balanceBefore: true,
+        balanceAfter: true,
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    // Extraer loanTrack de cada descripción y verificar si el préstamo existe
+    const trackedDisbursements = await Promise.all(
+      disbursements.map(async (disbursement) => {
+        // Extraer loanTrack de la descripción (formato: "Préstamo CREDITO-2026-00046 - Desembolso")
+        const match = disbursement.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+        const loanTrack = match ? match[1] : null;
+
+        let loanExists = false;
+        let loanId: string | null = null;
+        let loanAmount: number | null = null;
+        let clientInfo: any = null;
+
+        // Obtener información del usuario que creó la transacción
+        const user = await this.prisma.user.findUnique({
+          where: { id: disbursement.userId },
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            role: true,
+          },
+        });
+
+        if (loanTrack) {
+          const loan = await this.prisma.loan.findUnique({
+            where: { loanTrack },
+            select: {
+              id: true,
+              amount: true,
+              originalAmount: true,
+              deletedAt: true,
+              clientId: true,
+              client: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  dni: true,
+                  cuit: true,
+                  phone: true,
+                  email: true,
+                },
+              },
+            },
+          });
+
+          if (loan) {
+            loanExists = true;
+            loanId = loan.id;
+            loanAmount = Number(loan.originalAmount);
+            clientInfo = loan.client;
+          } else {
+            // Si el préstamo no existe, buscar en la tabla Transaction por loanTrack en la descripción
+            // o buscar por cualquier referencia que pueda tener el clientId
+            const transaction = await this.prisma.transaction.findFirst({
+              where: {
+                description: {
+                  contains: loanTrack,
+                },
+                deletedAt: null,
+              },
+              select: {
+                clientId: true,
+                client: {
+                  select: {
+                    id: true,
+                    fullName: true,
+                    dni: true,
+                    cuit: true,
+                    phone: true,
+                    email: true,
+                  },
+                },
+              },
+              orderBy: {
+                createdAt: 'desc',
+              },
+            });
+
+            if (transaction && transaction.client) {
+              clientInfo = transaction.client;
+            }
+          }
+        }
+
+        return {
+          transactionId: disbursement.id,
+          walletId: disbursement.walletId,
+          userId: disbursement.userId,
+          user: user
+            ? {
+                id: user.id,
+                email: user.email,
+                fullName: user.fullName,
+                role: user.role,
+              }
+            : null,
+          amount: Number(disbursement.amount),
+          currency: disbursement.currency,
+          description: disbursement.description,
+          loanTrack: loanTrack || 'No encontrado en descripción',
+          loanExists,
+          loanId,
+          loanAmount,
+          client: clientInfo,
+          balanceBefore: Number(disbursement.balanceBefore),
+          balanceAfter: Number(disbursement.balanceAfter),
+          createdAt: disbursement.createdAt,
+        };
+      }),
+    );
+
+    // Calcular estadísticas
+    const totalDisbursements = trackedDisbursements.length;
+    const disbursementsWithLoan = trackedDisbursements.filter((d) => d.loanExists);
+    const disbursementsWithoutLoan = trackedDisbursements.filter((d) => !d.loanExists);
+
+    const totalAmountWithLoan = disbursementsWithLoan.reduce(
+      (sum, d) => sum + d.amount,
+      0,
+    );
+    const totalAmountWithoutLoan = disbursementsWithoutLoan.reduce(
+      (sum, d) => sum + d.amount,
+      0,
+    );
+
+    return {
+      summary: {
+        totalDisbursements,
+        disbursementsWithLoan: disbursementsWithLoan.length,
+        disbursementsWithoutLoan: disbursementsWithoutLoan.length,
+        totalAmountWithLoan: Number(totalAmountWithLoan.toFixed(2)),
+        totalAmountWithoutLoan: Number(totalAmountWithoutLoan.toFixed(2)),
+      },
+      disbursements: trackedDisbursements,
+      orphanedDisbursements: disbursementsWithoutLoan, // Préstamos eliminados
+    };
+  }
+
+  /**
+   * Crear transacciones de reversión para préstamos eliminados que no tienen reversión
+   * Esto corrige el balance y hace visible la reversión en el historial
+   */
+  async createMissingReversalTransactions(managerId?: string): Promise<any> {
+    // Obtener todas las transacciones LOAN_DISBURSEMENT
+    const whereClause: any = {
+      type: CollectorWalletTransactionType.LOAN_DISBURSEMENT,
+      amount: {
+        gt: 0, // Solo desembolsos positivos (no reversiones)
+      },
+    };
+
+    if (managerId) {
+      const wallet = await this.getOrCreateWallet(managerId);
+      whereClause.walletId = wallet.id;
+    }
+
+    const disbursements = await this.prisma.collectorWalletTransaction.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        walletId: true,
+        userId: true,
+        amount: true,
+        currency: true,
+        description: true,
+        balanceBefore: true,
+        balanceAfter: true,
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const reversionsCreated: any[] = [];
+    const errors: any[] = [];
+
+    for (const disbursement of disbursements) {
+      // Extraer loanTrack de la descripción
+      const match = disbursement.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+      if (!match || !match[1]) {
+        continue;
+      }
+
+      const loanTrack = match[1];
+
+      // Verificar si el préstamo existe
+      const loan = await this.prisma.loan.findUnique({
+        where: { loanTrack },
+        select: { id: true },
+      });
+
+      // Si el préstamo no existe, verificar si ya hay una reversión
+      if (!loan) {
+        const existingReversal = await this.prisma.collectorWalletTransaction.findFirst({
+          where: {
+            walletId: disbursement.walletId,
+            type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
+            description: {
+              contains: `Devolución desembolso por eliminación de préstamo ${loanTrack}`,
+            },
+          },
+        });
+
+        // Si no hay reversión, crearla
+        if (!existingReversal) {
+          try {
+            const disbursementAmount = Number(disbursement.amount);
+            const wallet = await this.prisma.collectorWallet.findUnique({
+              where: { id: disbursement.walletId },
+            });
+
+            if (!wallet) {
+              errors.push({
+                disbursementId: disbursement.id,
+                loanTrack,
+                error: 'Wallet no encontrada',
+              });
+              continue;
+            }
+
+            const currentBalance = Number(wallet.balance);
+            const newBalance = currentBalance + disbursementAmount;
+
+            // Crear la transacción de reversión
+            // Usar CASH_ADJUSTMENT con amount positivo porque estamos devolviendo dinero (sumando al balance)
+            const reversalTransaction = await this.prisma.collectorWalletTransaction.create({
+              data: {
+                walletId: disbursement.walletId,
+                userId: disbursement.userId,
+                type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
+                amount: new Prisma.Decimal(disbursementAmount), // Positivo porque devolvemos dinero
+                currency: disbursement.currency,
+                description: `Devolución desembolso por eliminación de préstamo ${loanTrack}`,
+                balanceBefore: new Prisma.Decimal(currentBalance),
+                balanceAfter: new Prisma.Decimal(newBalance),
+              },
+            });
+
+            // Actualizar el balance de la wallet
+            await this.prisma.collectorWallet.update({
+              where: { id: disbursement.walletId },
+              data: {
+                balance: new Prisma.Decimal(newBalance),
+              },
+            });
+
+            reversionsCreated.push({
+              disbursementId: disbursement.id,
+              reversalId: reversalTransaction.id,
+              loanTrack,
+              amount: disbursementAmount,
+              balanceBefore: currentBalance,
+              balanceAfter: newBalance,
+              createdAt: reversalTransaction.createdAt,
+            });
+          } catch (error) {
+            errors.push({
+              disbursementId: disbursement.id,
+              loanTrack,
+              error: error.message,
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      totalProcessed: disbursements.length,
+      reversionsCreated: reversionsCreated.length,
+      errors: errors.length,
+      reversions: reversionsCreated,
+      errorsDetail: errors,
     };
   }
 
@@ -2225,63 +2522,21 @@ export class CollectorWalletService {
       },
     });
 
-    // Recalcular balances para cada manager
-    const managersWithBalances = await Promise.all(
-      managers.map(async (manager) => {
-        let balance = 0;
-        
-        if (manager.collectorWallet) {
-          // Recalcular balance desde transacciones
-          const transactions = await this.prisma.collectorWalletTransaction.findMany({
-            where: { walletId: manager.collectorWallet.id },
-            orderBy: { createdAt: 'asc' },
-          });
+    // Usar el balance almacenado directamente (no recalcular para evitar sobrescrituras)
+    const managersWithBalances = managers.map((manager) => {
+      const balance = manager.collectorWallet ? Number(manager.collectorWallet.balance) : 0;
 
-          let calculatedBalance = 0;
-          for (const transaction of transactions) {
-            if (
-              transaction.type === CollectorWalletTransactionType.COLLECTION ||
-              transaction.type === CollectorWalletTransactionType.CASH_ADJUSTMENT ||
-              transaction.type === CollectorWalletTransactionType.PAYMENT_RESET
-            ) {
-              // COLLECTION y CASH_ADJUSTMENT tienen amount positivo, PAYMENT_RESET tiene amount negativo
-              // Al sumar directamente, PAYMENT_RESET resta correctamente
-              calculatedBalance += Number(transaction.amount);
-            } else if (
-              transaction.type === CollectorWalletTransactionType.WITHDRAWAL ||
-              transaction.type === CollectorWalletTransactionType.ROUTE_EXPENSE ||
-              transaction.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT
-            ) {
-              calculatedBalance -= Number(transaction.amount);
-            }
-          }
-
-          balance = calculatedBalance;
-
-          // Si hay discrepancia, actualizar el balance almacenado
-          const storedBalance = Number(manager.collectorWallet.balance);
-          if (Math.abs(calculatedBalance - storedBalance) > 0.01) {
-            await this.prisma.collectorWallet.update({
-              where: { id: manager.collectorWallet.id },
-              data: {
-                balance: calculatedBalance,
-              },
-            });
-          }
-        }
-
-        return {
-          managerId: manager.id,
-          email: manager.email,
-          fullName: manager.fullName,
-          collectorWallet: {
-            id: manager.collectorWallet?.id || null,
-            balance: balance,
-            currency: manager.collectorWallet?.currency || 'ARS',
-          },
-        };
-      }),
-    );
+      return {
+        managerId: manager.id,
+        email: manager.email,
+        fullName: manager.fullName,
+        collectorWallet: {
+          id: manager.collectorWallet?.id || null,
+          balance: balance,
+          currency: manager.collectorWallet?.currency || 'ARS',
+        },
+      };
+    });
 
     const totalBalance = managersWithBalances.reduce(
       (sum, m) => sum + m.collectorWallet.balance,

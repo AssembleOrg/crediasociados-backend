@@ -11,6 +11,7 @@ import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
 import { Prisma, UserRole } from '@prisma/client';
 import { LoanStatus, WalletTransactionType } from 'src/common/enums';
+import { CollectorWalletTransactionType } from '../common/enums';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 
 @Injectable()
@@ -941,7 +942,61 @@ export class LoansService {
         where: { loanId: loanId },
       });
 
-      // 4. Devolver dinero a la wallet si hay monto a devolver
+      // 4. Revertir transacción LOAN_DISBURSEMENT en CollectorWallet
+      // Buscar la transacción por la descripción que contiene el loanTrack
+      const collectorWallet = await this.collectorWalletService.getOrCreateWallet(
+        userId,
+        tx,
+      );
+      
+      const disbursementTransaction = await tx.collectorWalletTransaction.findFirst({
+        where: {
+          walletId: collectorWallet.id,
+          type: CollectorWalletTransactionType.LOAN_DISBURSEMENT,
+          description: {
+            contains: loan.loanTrack,
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      let updatedCollectorWallet: any = null;
+      let collectorWalletReversalTransaction: any = null;
+
+      if (disbursementTransaction) {
+        const disbursementAmount = Number(disbursementTransaction.amount);
+        const collectorBalanceBefore = Number(collectorWallet.balance);
+        const collectorBalanceAfter = collectorBalanceBefore + disbursementAmount;
+
+        // Revertir el balance del CollectorWallet (incrementar)
+        updatedCollectorWallet = await tx.collectorWallet.update({
+          where: { id: collectorWallet.id },
+          data: {
+            balance: {
+              increment: new Prisma.Decimal(disbursementAmount),
+            },
+          },
+        });
+
+        // Crear transacción de reversión en CollectorWallet
+        // Usar CASH_ADJUSTMENT con amount positivo porque estamos devolviendo dinero (sumando al balance)
+        collectorWalletReversalTransaction = await tx.collectorWalletTransaction.create({
+          data: {
+            walletId: collectorWallet.id,
+            userId: userId,
+            type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
+            amount: new Prisma.Decimal(disbursementAmount), // Positivo porque devolvemos dinero
+            currency: collectorWallet.currency,
+            description: `Devolución desembolso por eliminación de préstamo ${loan.loanTrack}`,
+            balanceBefore: new Prisma.Decimal(collectorBalanceBefore),
+            balanceAfter: new Prisma.Decimal(collectorBalanceAfter),
+          },
+        });
+      }
+
+      // 5. Devolver dinero a la wallet si hay monto a devolver
       let updatedWallet: any = null;
       let walletTransaction: any = null;
 
@@ -968,7 +1023,7 @@ export class LoansService {
         });
       }
 
-      // 5. Eliminar el préstamo definitivamente
+      // 6. Eliminar el préstamo definitivamente (hard delete)
       await tx.loan.delete({
         where: { id: loanId },
       });
@@ -976,6 +1031,8 @@ export class LoansService {
       return {
         updatedWallet,
         walletTransaction,
+        updatedCollectorWallet,
+        collectorWalletReversalTransaction,
         montoDevuelto: montoADevolver,
       };
     });
@@ -1003,6 +1060,9 @@ export class LoansService {
       newWalletBalance: result.updatedWallet
         ? Number(result.updatedWallet.balance)
         : Number(managerWallet.balance),
+      newCollectorWalletBalance: result.updatedCollectorWallet
+        ? Number(result.updatedCollectorWallet.balance)
+        : null,
     };
   }
 

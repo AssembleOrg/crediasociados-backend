@@ -606,5 +606,57 @@ export class CollectorWalletController {
       currentUser.role,
     );
   }
+
+  @Get('track-loan-disbursements')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Trackear transacciones LOAN_DISBURSEMENT para detectar discrepancias',
+    description:
+      'Obtiene todas las transacciones LOAN_DISBURSEMENT y verifica si el préstamo asociado aún existe. ' +
+      'Útil para detectar préstamos eliminados (hard delete) que dejaron transacciones huérfanas. ' +
+      'Solo para ADMIN y SUPERADMIN.',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: false,
+    type: String,
+    description: 'ID del manager para filtrar (opcional). Si no se proporciona, muestra todos.',
+    example: 'cmjop3g5s01czs10we17udzbu',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Análisis de transacciones LOAN_DISBURSEMENT',
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Solo administradores' })
+  async trackLoanDisbursements(@Query('managerId') managerId?: string) {
+    return this.collectorWalletService.trackLoanDisbursements(managerId);
+  }
+
+  @Post('create-missing-reversals')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Crear transacciones de reversión para préstamos eliminados sin reversión',
+    description:
+      'Busca préstamos eliminados que no tienen transacción de reversión y las crea. ' +
+      'Esto corrige el balance y hace visible la reversión en el historial. ' +
+      'Solo para ADMIN y SUPERADMIN.',
+  })
+  @ApiQuery({
+    name: 'managerId',
+    required: false,
+    type: String,
+    description: 'ID del manager para filtrar (opcional). Si no se proporciona, procesa todos.',
+    example: 'cmjop3g5s01czs10we17udzbu',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Reversiones creadas exitosamente',
+  })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Solo administradores' })
+  async createMissingReversals(@Query('managerId') managerId?: string) {
+    return this.collectorWalletService.createMissingReversalTransactions(managerId);
+  }
 }
 
