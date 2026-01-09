@@ -125,12 +125,12 @@ export class CollectorWalletService {
       };
     }
 
-    // Obtener todas las wallets de los managers con sus balances
+    // Obtener todas las wallets de los managers
     const wallets = await this.prisma.collectorWallet.findMany({
       where: {
         userId: { in: managedUserIds },
       },
-      select: { id: true, balance: true },
+      select: { id: true },
     });
 
     if (wallets.length === 0) {
@@ -143,10 +143,14 @@ export class CollectorWalletService {
       };
     }
 
-    // Sumar los balances de todas las wallets
+    // Obtener el balance de cada wallet desde su última transacción (fuente de verdad)
     let totalBalance = 0;
     for (const wallet of wallets) {
-      totalBalance += Number(wallet.balance);
+      const lastTx = await this.prisma.collectorWalletTransaction.findFirst({
+        where: { walletId: wallet.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      totalBalance += lastTx ? Number(lastTx.balanceAfter) : 0;
     }
 
     return {
@@ -203,7 +207,15 @@ export class CollectorWalletService {
 
     // Obtener o crear wallet
     const wallet = await this.getOrCreateWallet(userId, transaction);
-    const balanceBefore = Number(wallet.balance);
+
+    // Obtener la última transacción para determinar el saldo real
+    const lastTransaction = await transaction.collectorWalletTransaction.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Usar el balanceAfter de la última transacción como balanceBefore
+    const balanceBefore = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
     const balanceAfter = balanceBefore + amount;
 
     // Actualizar balance usando increment para atomicidad
@@ -287,9 +299,18 @@ export class CollectorWalletService {
           throw new NotFoundException('Wallet de cobrador no encontrada');
         }
 
-        const currentBalance = Number(wallet.balance);
-        const balanceBefore = currentBalance;
-        const balanceAfter = currentBalance - amount;
+        // Obtener la última transacción para determinar el saldo real
+        const lastTransaction = await tx.collectorWalletTransaction.findFirst({
+          where: { walletId: wallet.id },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        // Usar el balanceAfter de la última transacción como balanceBefore
+        // Si no hay transacciones previas, usar 0
+        const balanceBefore = lastTransaction
+          ? Number(lastTransaction.balanceAfter)
+          : 0;
+        const balanceAfter = balanceBefore - amount;
 
         // Actualizar balance usando decrement para atomicidad
         // PERMITE SALDO NEGATIVO
@@ -435,7 +456,15 @@ export class CollectorWalletService {
           throw new NotFoundException('Wallet de cobrador no encontrada');
         }
 
-        const collectorBalanceBefore = Number(collectorWallet.balance);
+        // Obtener la última transacción para determinar el saldo real
+        const lastTransaction = await tx.collectorWalletTransaction.findFirst({
+          where: { walletId: collectorWallet.id },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const collectorBalanceBefore = lastTransaction
+          ? Number(lastTransaction.balanceAfter)
+          : 0;
 
         // 2. Obtener o crear Safe del manager
         let managerSafe = await tx.safe.findUnique({
@@ -465,7 +494,8 @@ export class CollectorWalletService {
           },
         });
 
-        const collectorBalanceAfter = Number(updatedCollectorWallet.balance);
+        // Calcular balanceAfter basado en la última transacción
+        const collectorBalanceAfter = collectorBalanceBefore - amount;
 
         // 4. Acreditar a la Safe del manager (depósito)
         const updatedManagerSafe = await tx.safe.update({
@@ -566,7 +596,15 @@ export class CollectorWalletService {
 
     // Obtener o crear wallet
     const wallet = await this.getOrCreateWallet(userId, transaction);
-    const balanceBefore = Number(wallet.balance);
+
+    // Obtener la última transacción para determinar el saldo real
+    const lastTransaction = await transaction.collectorWalletTransaction.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Usar el balanceAfter de la última transacción como balanceBefore
+    const balanceBefore = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
 
     // Actualizar balance usando decrement para atomicidad
     // PERMITE SALDO NEGATIVO
@@ -620,7 +658,15 @@ export class CollectorWalletService {
 
     // Obtener o crear wallet
     const wallet = await this.getOrCreateWallet(userId, transaction);
-    const balanceBefore = Number(wallet.balance);
+
+    // Obtener la última transacción para determinar el saldo real
+    const lastTransaction = await transaction.collectorWalletTransaction.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Usar el balanceAfter de la última transacción como balanceBefore
+    const balanceBefore = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
     const balanceAfter = balanceBefore - amount;
 
     // Actualizar balance usando decrement para atomicidad
@@ -718,7 +764,13 @@ export class CollectorWalletService {
       const managerCollectorWallet = await this.getOrCreateWallet(managerId, tx);
       
       const safeBalanceBefore = Number(safe.balance);
-      const collectorBalanceBefore = Number(managerCollectorWallet.balance);
+
+      // Obtener la última transacción para determinar el saldo real de la collector wallet
+      const lastCollectorTx = await tx.collectorWalletTransaction.findFirst({
+        where: { walletId: managerCollectorWallet.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      const collectorBalanceBefore = lastCollectorTx ? Number(lastCollectorTx.balanceAfter) : 0;
 
       // 3. Debitar de la Safe del manager (permite saldo negativo)
       const updatedSafe = await tx.safe.update({
@@ -742,7 +794,8 @@ export class CollectorWalletService {
         },
       });
 
-      const collectorBalanceAfter = Number(updatedCollectorWallet.balance);
+      // Calcular balanceAfter basado en la última transacción
+      const collectorBalanceAfter = collectorBalanceBefore + amount;
 
       // 5. Crear transacción en la Safe del manager
       const safeTransaction = await tx.safeTransaction.create({
@@ -783,6 +836,7 @@ export class CollectorWalletService {
         collectorTransaction,
         safeBalanceBefore,
         collectorBalanceBefore,
+        collectorBalanceAfter,
       };
     });
 
@@ -794,8 +848,8 @@ export class CollectorWalletService {
       },
       collectorWallet: {
         balanceBefore: result.collectorBalanceBefore,
-        balanceAfter: Number(result.collectorWallet.balance),
-        newBalance: Number(result.collectorWallet.balance),
+        balanceAfter: result.collectorBalanceAfter,
+        newBalance: result.collectorBalanceAfter,
       },
       safeTransaction: {
         id: result.safeTransaction.id,
@@ -1048,7 +1102,7 @@ export class CollectorWalletService {
     const wallet = await this.getOrCreateWallet(userId);
 
     // Obtener estadísticas de cobros y retiros
-    const [collectionsSum, withdrawalsSum, transactionCount] =
+    const [collectionsSum, withdrawalsSum, transactionCount, lastTransaction] =
       await Promise.all([
         this.prisma.collectorWalletTransaction.aggregate({
           where: {
@@ -1071,11 +1125,18 @@ export class CollectorWalletService {
         this.prisma.collectorWalletTransaction.count({
           where: { walletId: wallet.id },
         }),
+        this.prisma.collectorWalletTransaction.findFirst({
+          where: { walletId: wallet.id },
+          orderBy: { createdAt: 'desc' },
+        }),
       ]);
+
+    // Usar el balance de la última transacción (fuente de verdad)
+    const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
 
     return {
       walletId: wallet.id,
-      currentBalance: Number(wallet.balance),
+      currentBalance,
       currency: wallet.currency,
       totalCollected: Number(collectionsSum._sum.amount || 0),
       totalWithdrawn: Number(withdrawalsSum._sum.amount || 0),
@@ -2109,9 +2170,12 @@ export class CollectorWalletService {
       }
     }
 
-    // Obtener el balance actual de la wallet
-    // El balance ya está sincronizado y es más eficiente que recalcular desde cero
-    const currentBalance = Number(wallet.balance);
+    // Obtener el balance actual desde la última transacción (fuente de verdad)
+    const lastTransaction = await this.prisma.collectorWalletTransaction.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
 
     return {
       transactions: transactions.map((t) => {
@@ -2409,7 +2473,13 @@ export class CollectorWalletService {
               continue;
             }
 
-            const currentBalance = Number(wallet.balance);
+            // Obtener la última transacción para determinar el saldo real
+            const lastTransaction = await this.prisma.collectorWalletTransaction.findFirst({
+              where: { walletId: wallet.id },
+              orderBy: { createdAt: 'desc' },
+            });
+
+            const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
             const newBalance = currentBalance + disbursementAmount;
 
             // Crear la transacción de reversión
@@ -2522,9 +2592,27 @@ export class CollectorWalletService {
       },
     });
 
-    // Usar el balance almacenado directamente (no recalcular para evitar sobrescrituras)
+    // Obtener el balance de cada wallet desde la última transacción (fuente de verdad)
+    const walletIds = managers
+      .filter((m) => m.collectorWallet)
+      .map((m) => m.collectorWallet!.id);
+
+    // Obtener la última transacción de cada wallet para determinar el balance real
+    const lastTransactionsByWallet = new Map<string, number>();
+    if (walletIds.length > 0) {
+      for (const walletId of walletIds) {
+        const lastTx = await this.prisma.collectorWalletTransaction.findFirst({
+          where: { walletId },
+          orderBy: { createdAt: 'desc' },
+        });
+        lastTransactionsByWallet.set(walletId, lastTx ? Number(lastTx.balanceAfter) : 0);
+      }
+    }
+
     const managersWithBalances = managers.map((manager) => {
-      const balance = manager.collectorWallet ? Number(manager.collectorWallet.balance) : 0;
+      const balance = manager.collectorWallet
+        ? (lastTransactionsByWallet.get(manager.collectorWallet.id) ?? 0)
+        : 0;
 
       return {
         managerId: manager.id,

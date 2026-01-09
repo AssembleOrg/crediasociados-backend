@@ -454,22 +454,22 @@ export class ClientsService {
     const searchClient = async (whereClause: any) => {
       return await this.prisma.client.findFirst({
         where: { ...whereClause, deletedAt: null },
-        include: {
-          managers: {
-            where: { deletedAt: null },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  fullName: true,
-                  email: true,
-                  role: true,
-                },
+      include: {
+        managers: {
+          where: { deletedAt: null },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+                role: true,
               },
             },
           },
         },
-      });
+      },
+    });
     };
 
     // Función auxiliar para validar acceso al cliente
@@ -515,7 +515,7 @@ export class ClientsService {
         },
       });
       if (client && (await validateAccess(client))) {
-        return client;
+    return client;
       } else if (client) {
         client = null; // Continuar buscando
       }

@@ -1464,27 +1464,27 @@ export class CollectionRoutesService {
         const outstandingBalance = loanId ? outstandingBalancesMap.get(loanId) ?? null : null;
 
         return {
-          id: item.id,
-          routeId: item.routeId,
-          subLoanId: item.subLoanId,
-          clientName: item.clientName,
-          clientPhone: item.clientPhone,
-          clientAddress: item.clientAddress,
-          orderIndex: item.orderIndex,
-          amountCollected: Number(item.amountCollected),
-          notes: item.notes,
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-            subLoan: item.subLoan
-              ? {
-                  id: item.subLoan.id,
-                  paymentNumber: item.subLoan.paymentNumber,
-                  amount: Number(item.subLoan.amount),
-                  totalAmount: Number(item.subLoan.totalAmount),
-                  paidAmount: Number(item.subLoan.paidAmount),
-                  status: item.subLoan.status,
-                  dueDate: item.subLoan.dueDate,
-                  loan: item.subLoan.loan,
+        id: item.id,
+        routeId: item.routeId,
+        subLoanId: item.subLoanId,
+        clientName: item.clientName,
+        clientPhone: item.clientPhone,
+        clientAddress: item.clientAddress,
+        orderIndex: item.orderIndex,
+        amountCollected: Number(item.amountCollected),
+        notes: item.notes,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        subLoan: item.subLoan
+          ? {
+              id: item.subLoan.id,
+              paymentNumber: item.subLoan.paymentNumber,
+              amount: Number(item.subLoan.amount),
+              totalAmount: Number(item.subLoan.totalAmount),
+              paidAmount: Number(item.subLoan.paidAmount),
+              status: item.subLoan.status,
+              dueDate: item.subLoan.dueDate,
+              loan: item.subLoan.loan,
                   outstandingBalance: outstandingBalance,
                   payments: item.subLoan.payments
                     ? item.subLoan.payments.map((payment: any) => ({
@@ -1495,8 +1495,8 @@ export class CollectionRoutesService {
                         createdAt: payment.createdAt,
                       }))
                     : [],
-                }
-              : undefined,
+            }
+          : undefined,
         };
       }),
       expenses: (route.expenses || []).map((expense: any) => ({
