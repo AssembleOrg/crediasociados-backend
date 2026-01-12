@@ -1275,6 +1275,7 @@ export class CollectionRoutesService {
 
   /**
    * Eliminar un gasto
+   * Al eliminar un gasto, se crea automáticamente un ajuste de caja para devolver el dinero a la wallet
    */
   async deleteRouteExpense(
     expenseId: string,
@@ -1300,11 +1301,27 @@ export class CollectionRoutesService {
       );
     }
 
-    await this.prisma.routeExpense.delete({
-      where: { id: expenseId },
+    // Eliminar el gasto y crear ajuste de caja para devolver el dinero en una transacción atómica
+    await this.prisma.$transaction(async (tx) => {
+      // Crear ajuste de caja para devolver el dinero a la wallet del manager
+      await this.collectorWalletService.recordCashAdjustmentDirect({
+        userId: expense.route.managerId,
+        amount: Number(expense.amount),
+        description: `Devolución de gasto eliminado: ${expense.description}`,
+        transaction: tx,
+      });
+
+      // Eliminar el gasto
+      await tx.routeExpense.delete({
+        where: { id: expenseId },
+      });
     });
 
-    return { message: 'Gasto eliminado exitosamente' };
+    this.logger.log(
+      `Gasto eliminado y dinero devuelto: ${expense.id}, Monto: ${expense.amount}, Manager: ${expense.route.managerId}`,
+    );
+
+    return { message: 'Gasto eliminado exitosamente. El dinero ha sido devuelto a la wallet.' };
   }
 
   /**

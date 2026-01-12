@@ -1035,11 +1035,12 @@ export class PaymentsService {
       );
     }
 
-    // Validar que el último pago no sea mayor a 24 horas
+    // Validar que el último pago no sea mayor a 20 horas
+    // Usar createdAt (cuando se registró) en lugar de paymentDate (fecha del pago)
     const lastPayment = subLoan.payments[0];
-    const lastPaymentDate = DateUtil.fromPrismaDate(lastPayment.paymentDate);
+    const lastPaymentCreatedAt = DateUtil.fromPrismaDate(lastPayment.createdAt);
     const now = DateUtil.now();
-    const hoursDiff = now.diff(lastPaymentDate, 'hours').hours;
+    const hoursDiff = now.diff(lastPaymentCreatedAt, 'hours').hours;
 
     if (hoursDiff > 20) {
       throw new BadRequestException(

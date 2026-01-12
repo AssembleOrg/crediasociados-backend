@@ -228,45 +228,36 @@ export class CollectorWalletService {
       },
     });
 
-    // Verificar que el balance se actualizó correctamente
+    // Verificar si hay discrepancia y corregir el wallet si es necesario
+    // El balanceAfter calculado es la fuente de verdad, no el wallet.balance
     const actualBalanceAfter = Number(updatedWallet.balance);
     if (Math.abs(actualBalanceAfter - balanceAfter) > 0.01) {
-      this.logger.error(
-        `Error: Balance no coincide después del increment. Esperado: ${balanceAfter}, Obtenido: ${actualBalanceAfter}`,
+      // El wallet está desincronizado, corregirlo para que coincida con nuestro cálculo
+      await transaction.collectorWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: new Prisma.Decimal(balanceAfter),
+        },
+      });
+      this.logger.warn(
+        `Wallet balance corregido automáticamente: ${actualBalanceAfter} -> ${balanceAfter} (Usuario: ${userId})`,
       );
-      // Usar el balance real obtenido de la actualización
-      const correctedBalanceAfter = actualBalanceAfter;
-      
-      // Registrar transacción con el balance corregido
-      await transaction.collectorWalletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          userId,
-          type: CollectorWalletTransactionType.COLLECTION,
-          amount: new Prisma.Decimal(amount),
-          currency: wallet.currency,
-          description,
-          balanceBefore: new Prisma.Decimal(balanceBefore),
-          balanceAfter: new Prisma.Decimal(correctedBalanceAfter),
-          subLoanId,
-        },
-      });
-    } else {
-      // Registrar transacción con balances
-      await transaction.collectorWalletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          userId,
-          type: CollectorWalletTransactionType.COLLECTION,
-          amount: new Prisma.Decimal(amount),
-          currency: wallet.currency,
-          description,
-          balanceBefore: new Prisma.Decimal(balanceBefore),
-          balanceAfter: new Prisma.Decimal(balanceAfter),
-          subLoanId,
-        },
-      });
     }
+
+    // SIEMPRE usar balanceAfter calculado basado en la última transacción (fuente de verdad)
+    await transaction.collectorWalletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        userId,
+        type: CollectorWalletTransactionType.COLLECTION,
+        amount: new Prisma.Decimal(amount),
+        currency: wallet.currency,
+        description,
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
+        subLoanId,
+      },
+    });
 
     this.logger.log(
       `Cobro registrado: Usuario ${userId}, Monto ${amount}, Nuevo balance ${balanceAfter}`,
@@ -323,7 +314,23 @@ export class CollectorWalletService {
           },
         });
 
-        // Registrar transacción de retiro
+        // Verificar si hay discrepancia y corregir el wallet si es necesario
+        // El balanceAfter calculado es la fuente de verdad, no el wallet.balance
+        const actualBalanceAfter = Number(updatedWallet.balance);
+        if (Math.abs(actualBalanceAfter - balanceAfter) > 0.01) {
+          // El wallet está desincronizado, corregirlo para que coincida con nuestro cálculo
+          await tx.collectorWallet.update({
+            where: { id: wallet.id },
+            data: {
+              balance: new Prisma.Decimal(balanceAfter),
+            },
+          });
+          this.logger.warn(
+            `Wallet balance corregido automáticamente: ${actualBalanceAfter} -> ${balanceAfter} (Usuario: ${userId})`,
+          );
+        }
+
+        // SIEMPRE usar balanceAfter calculado basado en la última transacción (fuente de verdad)
         const transaction = await tx.collectorWalletTransaction.create({
           data: {
             walletId: wallet.id,
@@ -605,6 +612,7 @@ export class CollectorWalletService {
 
     // Usar el balanceAfter de la última transacción como balanceBefore
     const balanceBefore = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
+    const balanceAfter = balanceBefore - amount;
 
     // Actualizar balance usando decrement para atomicidad
     // PERMITE SALDO NEGATIVO
@@ -617,10 +625,23 @@ export class CollectorWalletService {
       },
     });
 
-    // Obtener el balance real después de la actualización
-    const balanceAfter = Number(updatedWallet.balance);
+    // Verificar si hay discrepancia y corregir el wallet si es necesario
+    // El balanceAfter calculado es la fuente de verdad, no el wallet.balance
+    const actualBalanceAfter = Number(updatedWallet.balance);
+    if (Math.abs(actualBalanceAfter - balanceAfter) > 0.01) {
+      // El wallet está desincronizado, corregirlo para que coincida con nuestro cálculo
+      await transaction.collectorWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: new Prisma.Decimal(balanceAfter),
+        },
+      });
+      this.logger.warn(
+        `Wallet balance corregido automáticamente: ${actualBalanceAfter} -> ${balanceAfter} (Usuario: ${userId})`,
+      );
+    }
 
-    // Registrar transacción de gasto de ruta
+    // SIEMPRE usar balanceAfter calculado basado en la última transacción (fuente de verdad)
     await transaction.collectorWalletTransaction.create({
       data: {
         walletId: wallet.id,
@@ -671,7 +692,7 @@ export class CollectorWalletService {
 
     // Actualizar balance usando decrement para atomicidad
     // PERMITE SALDO NEGATIVO
-    await transaction.collectorWallet.update({
+    const updatedWallet = await transaction.collectorWallet.update({
       where: { id: wallet.id },
       data: {
         balance: {
@@ -680,7 +701,23 @@ export class CollectorWalletService {
       },
     });
 
-    // Registrar transacción de desembolso de préstamo
+    // Verificar si hay discrepancia y corregir el wallet si es necesario
+    // El balanceAfter calculado es la fuente de verdad, no el wallet.balance
+    const actualBalanceAfter = Number(updatedWallet.balance);
+    if (Math.abs(actualBalanceAfter - balanceAfter) > 0.01) {
+      // El wallet está desincronizado, corregirlo para que coincida con nuestro cálculo
+      await transaction.collectorWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: new Prisma.Decimal(balanceAfter),
+        },
+      });
+      this.logger.warn(
+        `Wallet balance corregido automáticamente: ${actualBalanceAfter} -> ${balanceAfter} (Usuario: ${userId})`,
+      );
+    }
+
+    // SIEMPRE usar balanceAfter calculado basado en la última transacción (fuente de verdad)
     await transaction.collectorWalletTransaction.create({
       data: {
         walletId: wallet.id,
@@ -696,6 +733,81 @@ export class CollectorWalletService {
 
     this.logger.log(
       `Desembolso de préstamo registrado: Usuario ${userId}, Monto ${amount}, Nuevo balance ${balanceAfter}`,
+    );
+  }
+
+  /**
+   * Registrar un ajuste de caja directo en la wallet (uso interno)
+   * Crea una transacción CASH_ADJUSTMENT directamente en la wallet sin tocar la Safe
+   * Se usa para devolver dinero cuando se elimina un gasto de ruta
+   */
+  async recordCashAdjustmentDirect(params: {
+    userId: string;
+    amount: number;
+    description: string;
+    transaction: Prisma.TransactionClient;
+  }): Promise<void> {
+    const { userId, amount, description, transaction } = params;
+
+    if (amount <= 0) {
+      throw new BadRequestException('El monto debe ser mayor a 0');
+    }
+
+    // Obtener o crear wallet
+    const wallet = await this.getOrCreateWallet(userId, transaction);
+
+    // Obtener la última transacción para determinar el saldo real
+    const lastTransaction = await transaction.collectorWalletTransaction.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Usar el balanceAfter de la última transacción como balanceBefore
+    const balanceBefore = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
+    const balanceAfter = balanceBefore + amount;
+
+    // Actualizar balance usando increment para atomicidad
+    const updatedWallet = await transaction.collectorWallet.update({
+      where: { id: wallet.id },
+      data: {
+        balance: {
+          increment: new Prisma.Decimal(amount),
+        },
+      },
+    });
+
+    // Verificar si hay discrepancia y corregir el wallet si es necesario
+    // El balanceAfter calculado es la fuente de verdad, no el wallet.balance
+    const actualBalanceAfter = Number(updatedWallet.balance);
+    if (Math.abs(actualBalanceAfter - balanceAfter) > 0.01) {
+      // El wallet está desincronizado, corregirlo para que coincida con nuestro cálculo
+      await transaction.collectorWallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: new Prisma.Decimal(balanceAfter),
+        },
+      });
+      this.logger.warn(
+        `Wallet balance corregido automáticamente: ${actualBalanceAfter} -> ${balanceAfter} (Usuario: ${userId})`,
+      );
+    }
+
+    // SIEMPRE usar balanceAfter calculado basado en la última transacción (fuente de verdad)
+    await transaction.collectorWalletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        userId,
+        type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
+        amount: new Prisma.Decimal(amount),
+        currency: wallet.currency,
+        description,
+        balanceBefore: new Prisma.Decimal(balanceBefore),
+        balanceAfter: new Prisma.Decimal(balanceAfter),
+      },
+    });
+
+    this.logger.log(
+      `Ajuste de caja directo registrado: Usuario ${userId}, Monto ${amount}, Nuevo balance ${balanceAfter}`,
     );
   }
 
