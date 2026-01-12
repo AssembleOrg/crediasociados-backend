@@ -1482,6 +1482,40 @@ export class CollectorWalletService {
     const periodStartDt = DateUtil.fromJSDate(periodStart);
     const periodEndDt = DateUtil.fromJSDate(periodEnd);
     
+    // Obtener información de clientes para transacciones LOAN_DISBURSEMENT
+    // Extraer loanTracks de las transacciones LOAN_DISBURSEMENT
+    const loanTracksFromTransactions = new Set<string>();
+    collectorWalletTransactions
+      .filter((t) => t.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT)
+      .forEach((t) => {
+        const match = t.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+        if (match && match[1]) {
+          loanTracksFromTransactions.add(match[1]);
+        }
+      });
+
+    // Obtener préstamos con información de cliente para los loanTracks encontrados
+    const loansWithClients = await this.prisma.loan.findMany({
+      where: {
+        loanTrack: { in: Array.from(loanTracksFromTransactions) },
+        deletedAt: null,
+      },
+      select: {
+        loanTrack: true,
+        client: {
+          select: {
+            fullName: true,
+          },
+        },
+      },
+    });
+
+    // Crear mapa de loanTrack -> nombre del cliente
+    const loanTrackToClientName = new Map<string, string>();
+    loansWithClients.forEach((loan) => {
+      loanTrackToClientName.set(loan.loanTrack, loan.client.fullName);
+    });
+    
     return {
       period: {
         startDate: periodStartDt.toISO(), // Mostrará en formato ISO con offset GMT-3
@@ -1506,16 +1540,33 @@ export class CollectorWalletService {
       },
       // Datos adicionales para compatibilidad
       collectorWallet: {
-        transactions: collectorWalletTransactions.map((t) => ({
-          id: t.id,
-          type: t.type,
-          amount: Number(t.amount),
-          description: t.description,
-          balanceBefore: Number(t.balanceBefore),
-          balanceAfter: Number(t.balanceAfter),
-          subLoanId: t.subLoanId,
-          createdAt: t.createdAt,
-        })),
+        transactions: collectorWalletTransactions.map((t) => {
+          let description = t.description;
+          
+          // Si es LOAN_DISBURSEMENT, agregar el nombre del cliente a la descripción
+          if (t.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT) {
+            const match = t.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+            if (match && match[1]) {
+              const loanTrack = match[1];
+              const clientName = loanTrackToClientName.get(loanTrack);
+              if (clientName) {
+                // Formato: "Préstamo CREDITO-XXXX-XXXXX - Nombre Cliente - Desembolso"
+                description = `Préstamo ${loanTrack} - ${clientName} - Desembolso`;
+              }
+            }
+          }
+          
+          return {
+            id: t.id,
+            type: t.type,
+            amount: Number(t.amount),
+            description,
+            balanceBefore: Number(t.balanceBefore),
+            balanceAfter: Number(t.balanceAfter),
+            subLoanId: t.subLoanId,
+            createdAt: t.createdAt,
+          };
+        }),
         totalCollections,
         totalWithdrawals,
         totalLoaned: totalLoanedFromTransactions,
@@ -2177,14 +2228,63 @@ export class CollectorWalletService {
     });
     const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
 
+    // Obtener información de clientes para transacciones LOAN_DISBURSEMENT
+    // Extraer loanTracks de las transacciones LOAN_DISBURSEMENT
+    const loanTracksFromTransactions = new Set<string>();
+    transactions
+      .filter((t) => t.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT)
+      .forEach((t) => {
+        const match = t.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+        if (match && match[1]) {
+          loanTracksFromTransactions.add(match[1]);
+        }
+      });
+
+    // Obtener préstamos con información de cliente para los loanTracks encontrados
+    const loansWithClients = await this.prisma.loan.findMany({
+      where: {
+        loanTrack: { in: Array.from(loanTracksFromTransactions) },
+        deletedAt: null,
+      },
+      select: {
+        loanTrack: true,
+        client: {
+          select: {
+            fullName: true,
+          },
+        },
+      },
+    });
+
+    // Crear mapa de loanTrack -> nombre del cliente
+    const loanTrackToClientName = new Map<string, string>();
+    loansWithClients.forEach((loan) => {
+      loanTrackToClientName.set(loan.loanTrack, loan.client.fullName);
+    });
+
     return {
       transactions: transactions.map((t) => {
+        let description = t.description;
+        
+        // Si es LOAN_DISBURSEMENT, agregar el nombre del cliente a la descripción
+        if (t.type === CollectorWalletTransactionType.LOAN_DISBURSEMENT) {
+          const match = t.description.match(/Préstamo\s+(CREDITO-\d+-\d+)/i);
+          if (match && match[1]) {
+            const loanTrack = match[1];
+            const clientName = loanTrackToClientName.get(loanTrack);
+            if (clientName) {
+              // Formato: "Préstamo CREDITO-XXXX-XXXXX - Nombre Cliente - Desembolso"
+              description = `Préstamo ${loanTrack} - ${clientName} - Desembolso`;
+            }
+          }
+        }
+        
         const transactionData: any = {
           id: t.id,
           type: t.type,
           amount: Number(t.amount),
           currency: t.currency,
-          description: t.description,
+          description,
           balanceBefore: Number(t.balanceBefore),
           balanceAfter: Number(t.balanceAfter),
           subLoanId: t.subLoanId,
