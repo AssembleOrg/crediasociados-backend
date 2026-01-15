@@ -549,16 +549,74 @@ export class ClientsService {
     throw new NotFoundException('Cliente no encontrado');
   }
 
-  private async getManagedClientIds(userId: string): Promise<string[]> {
-    const managedClients = await this.prisma.clientManager.findMany({
-      where: {
-        userId: userId,
-        deletedAt: null,
+  /**
+   * Búsqueda de clientes para autocomplete (múltiples resultados)
+   */
+  async searchClientsForAutocomplete(
+    query: string,
+    userId: string,
+    userRole: UserRole,
+    limit: number = 20,
+  ) {
+    // Validar longitud mínima
+    if (!query || query.length < 2) {
+      throw new BadRequestException(
+        'La búsqueda debe tener al menos 2 caracteres',
+      );
+    }
+
+    // Limitar el máximo de resultados
+    const maxLimit = Math.min(limit || 20, 50);
+    const searchLimit = Math.max(maxLimit, 1);
+
+    // Construir whereClause base
+    const whereClause: any = {
+      deletedAt: null,
+      fullName: {
+        contains: query,
+        mode: 'insensitive',
       },
-      select: { clientId: true },
+    };
+
+    // Aplicar filtros de acceso por rol
+    if (userRole === UserRole.MANAGER) {
+      // MANAGER: solo sus clientes
+      whereClause.managers = {
+        some: {
+          userId: userId,
+          deletedAt: null,
+        },
+      };
+    } else if (userRole === UserRole.SUBADMIN) {
+      // SUBADMIN: clientes de sus managers
+      const managedUserIds = await this.getManagedUserIds(userId);
+      whereClause.managers = {
+        some: {
+          userId: { in: managedUserIds },
+          deletedAt: null,
+        },
+      };
+    }
+    // ADMIN y SUPERADMIN ven todos los clientes
+
+    // Buscar clientes
+    const clients = await this.prisma.client.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        fullName: true,
+        dni: true,
+        phone: true,
+        email: true,
+      },
+      take: searchLimit,
+      orderBy: {
+        fullName: 'asc',
+      },
     });
 
-    return managedClients.map((mc) => mc.clientId);
+    // Retornar directamente el array, el ResponseInterceptor agregará el wrapper
+    return clients;
   }
 
   private async getManagedUserIds(userId: string): Promise<string[]> {
@@ -571,6 +629,18 @@ export class ClientsService {
     });
 
     return managedUsers.map((mu) => mu.id);
+  }
+
+  private async getManagedClientIds(userId: string): Promise<string[]> {
+    const managedClients = await this.prisma.clientManager.findMany({
+      where: {
+        userId: userId,
+        deletedAt: null,
+      },
+      select: { clientId: true },
+    });
+
+    return managedClients.map((mc) => mc.clientId);
   }
 
   private async getManagedClientIdsByUsers(

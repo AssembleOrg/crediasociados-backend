@@ -148,4 +148,21 @@ export class LoanFiltersDto {
   @IsOptional()
   @IsDateString()
   dueDateTo?: string;
+
+  @ApiPropertyOptional({
+    example: 'Juan Pérez',
+    description: 'Búsqueda parcial por nombre de cliente (mínimo 2 caracteres, case-insensitive)',
+  })
+  @IsOptional()
+  @IsString()
+  clientName?: string;
+
+  @ApiPropertyOptional({
+    enum: ['ACTIVE', 'COMPLETED', 'ALL'],
+    example: 'ACTIVE',
+    description: 'Filtro por estado del préstamo. ACTIVE incluye ACTIVE y APPROVED, COMPLETED solo completados, ALL todos',
+  })
+  @IsOptional()
+  @IsEnum(['ACTIVE', 'COMPLETED', 'ALL'])
+  loanStatus?: 'ACTIVE' | 'COMPLETED' | 'ALL';
 }
