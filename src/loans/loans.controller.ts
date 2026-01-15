@@ -285,7 +285,8 @@ export class LoansController {
   )
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Obtener préstamos paginados del usuario autenticado',
+    summary: 'Obtener préstamos paginados del usuario autenticado con filtros avanzados',
+    description: 'Obtiene préstamos paginados con soporte para búsqueda parcial por nombre de cliente y filtros por estado y frecuencia de pago.',
   })
   @ApiQuery({
     name: 'page',
@@ -298,6 +299,19 @@ export class LoansController {
     required: false,
     description: 'Elementos por página',
     example: 10,
+  })
+  @ApiQuery({
+    name: 'clientName',
+    required: false,
+    description: 'Búsqueda parcial por nombre de cliente (mínimo 2 caracteres)',
+    example: 'juan',
+  })
+  @ApiQuery({
+    name: 'loanStatus',
+    required: false,
+    enum: ['ACTIVE', 'COMPLETED', 'ALL'],
+    description: 'Filtro por estado. ACTIVE incluye ACTIVE y APPROVED, COMPLETED solo completados, ALL todos',
+    example: 'ACTIVE',
   })
   @ApiResponse({
     status: 200,

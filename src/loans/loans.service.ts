@@ -517,10 +517,13 @@ export class LoansService {
       deletedAt: null,
     };
 
+    // Construir filtro de cliente base (se aplicará después si no hay clientName)
+    let baseClientFilter: any = null;
+
     // Filtros de acceso por rol
     if (userRole === UserRole.MANAGER) {
       // MANAGER: solo sus clientes
-      whereClause.client = {
+      baseClientFilter = {
         managers: {
           some: {
             userId: userId,
@@ -531,7 +534,7 @@ export class LoansService {
     } else if (userRole === UserRole.SUBADMIN) {
       // SUBADMIN: clientes de sus managers
       const managedUserIds = await this.getManagedUserIds(userId);
-      whereClause.client = {
+      baseClientFilter = {
         managers: {
           some: {
             userId: { in: managedUserIds },
@@ -540,7 +543,7 @@ export class LoansService {
         },
       };
     }
-    // ADMIN y SUPERADMIN ven todos los préstamos
+    // ADMIN y SUPERADMIN ven todos los préstamos (no aplican filtro base)
 
     // Aplicar filtros adicionales
     if (filters.managerId) {
@@ -566,7 +569,17 @@ export class LoansService {
       };
     }
 
-    if (filters.status) {
+    // Filtro por estado (soporta loanStatus para mapeo especial)
+    if (filters.loanStatus) {
+      if (filters.loanStatus === 'ACTIVE') {
+        // ACTIVE incluye ACTIVE y APPROVED
+        whereClause.status = { in: ['ACTIVE', 'APPROVED'] };
+      } else if (filters.loanStatus === 'COMPLETED') {
+        whereClause.status = 'COMPLETED';
+      }
+      // 'ALL' no aplica filtro
+    } else if (filters.status) {
+      // Mantener compatibilidad con el filtro status original
       whereClause.status = filters.status;
     }
 
@@ -618,6 +631,38 @@ export class LoansService {
       };
     }
 
+    // Búsqueda parcial por nombre de cliente
+    if (filters.clientName && filters.clientName.length >= 2) {
+      // Construir el filtro de cliente con búsqueda por nombre
+      const clientFilter: any = {
+        fullName: {
+          contains: filters.clientName,
+          mode: 'insensitive',
+        },
+        deletedAt: null,
+      };
+
+      // Combinar con los filtros de acceso por rol
+      if (baseClientFilter) {
+        clientFilter.managers = baseClientFilter.managers;
+      }
+
+      // Si ya hay un filtro de cliente (por managerId o clientId), combinarlo
+      if (whereClause.client) {
+        whereClause.client = {
+          ...whereClause.client,
+          ...clientFilter,
+          // Mantener managers si ya existe
+          managers: whereClause.client.managers || clientFilter.managers,
+        };
+      } else {
+        whereClause.client = clientFilter;
+      }
+    } else if (baseClientFilter && !whereClause.client) {
+      // Si no hay búsqueda por nombre pero hay filtro de acceso por rol, aplicarlo
+      whereClause.client = baseClientFilter;
+    }
+
     const [loans, total] = await Promise.all([
       this.prisma.loan.findMany({
         where: whereClause,
@@ -650,8 +695,14 @@ export class LoansService {
       this.prisma.loan.count({ where: whereClause }),
     ]);
 
+    // Agregar clientName a cada loan para facilitar el acceso en el frontend
+    const loansWithClientName = loans.map((loan) => ({
+      ...loan,
+      clientName: loan.client?.fullName || null,
+    }));
+
     return {
-      data: loans,
+      data: loansWithClientName,
       meta: {
         page,
         limit,

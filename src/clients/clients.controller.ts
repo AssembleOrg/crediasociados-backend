@@ -193,6 +193,68 @@ export class ClientsController {
     return result;
   }
 
+  @Get('search-autocomplete')
+  @ApiOperation({ 
+    summary: 'Search clients for autocomplete',
+    description: 'Search for clients by name (case-insensitive, partial match) for autocomplete. Returns multiple results. Minimum 2 characters required.'
+  })
+  @ApiQuery({
+    name: 'query',
+    required: true,
+    type: String,
+    example: 'juan',
+    description: 'Search query (minimum 2 characters)',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    description: 'Maximum number of results (default: 20, max: 50)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Clients found successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              fullName: { type: 'string' },
+              dni: { type: 'string', nullable: true },
+              phone: { type: 'string', nullable: true },
+              email: { type: 'string', nullable: true },
+            },
+          },
+        },
+        message: { type: 'string' },
+        timestamp: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Query too short (minimum 2 characters)',
+  })
+  async searchClientsForAutocomplete(
+    @CurrentUser() currentUser: any,
+    @Query('query') query: string,
+    @Query('limit') limit?: number,
+  ) {
+    return this.clientsService.searchClientsForAutocomplete(
+      query,
+      currentUser.id,
+      currentUser.role,
+      limit,
+    );
+  }
+
+
   @Get('inactive')
   @Roles(UserRole.MANAGER, UserRole.SUBADMIN)
   @ApiOperation({
