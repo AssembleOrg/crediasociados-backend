@@ -160,7 +160,7 @@ export class PaymentsService {
           data: {
             walletId: collectorWallet.id,
             userId: managerId,
-            type: CollectorWalletTransactionType.COLLECTION,
+            type: CollectorWalletTransactionType.PAYMENT_RESET,
             amount: new Prisma.Decimal(-lastPaymentAmount), // Negativo para indicar reversión
             currency: collectorWallet.currency,
             description: `Reversión cobro préstamo ${subLoan.loan.client.fullName} - Cuota #${subLoan.paymentNumber}`,
@@ -1521,7 +1521,7 @@ export class PaymentsService {
         data: {
           walletId: collectorWallet.id,
           userId: managerId,
-          type: CollectorWalletTransactionType.COLLECTION,
+          type: CollectorWalletTransactionType.PAYMENT_RESET,
           amount: new Prisma.Decimal(-totalPaidAmount),
           currency: collectorWallet.currency,
           description: `Reversión completa cobros SubLoan ${subLoan.loan.client.fullName} - Cuota #${subLoan.paymentNumber}`,
