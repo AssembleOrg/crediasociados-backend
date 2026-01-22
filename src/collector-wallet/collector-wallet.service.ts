@@ -1320,8 +1320,12 @@ export class CollectorWalletService {
       });
 
     // 2. Suma de cobros, retiros, préstamos y ajustes de caja del período
+    // Incluir COLLECTION y PAYMENT_RESET (PAYMENT_RESET tiene amount negativo, así que al sumar se resta automáticamente)
     const totalCollections = collectorWalletTransactions
-      .filter((t) => t.type === CollectorWalletTransactionType.COLLECTION)
+      .filter((t) => 
+        t.type === CollectorWalletTransactionType.COLLECTION ||
+        t.type === CollectorWalletTransactionType.PAYMENT_RESET
+      )
       .reduce((sum, t) => sum + Number(t.amount), 0);
 
     const totalWithdrawals = collectorWalletTransactions
@@ -1586,9 +1590,10 @@ export class CollectorWalletService {
     const commissionAmount = (totalAmountCollected * commissionPercentage) / 100;
 
     // 9. Calcular neto: cobrado - gastado - prestado - retirado + ajustes de caja
-    // Usar totalLoanedFromTransactions (de transacciones filtradas, solo préstamos que aún existen)
-    // para mantener consistencia con el balance de la wallet y excluir préstamos eliminados
-    const neto = totalAmountCollected - totalExpenses - totalLoanedFromTransactions - totalWithdrawals + totalCashAdjustments;
+    // Usar totalCollections (que incluye COLLECTION y PAYMENT_RESET) en lugar de totalAmountCollected
+    // para mantener consistencia con el balance de la wallet y reflejar correctamente los resets de pagos
+    // totalLoanedFromTransactions (de transacciones filtradas, solo préstamos que aún existen)
+    const neto = totalCollections - totalExpenses - totalLoanedFromTransactions - totalWithdrawals + totalCashAdjustments;
 
     // Construir respuesta - Formatear fechas del período en zona horaria Buenos Aires para claridad
     const periodStartDt = DateUtil.fromJSDate(periodStart);
@@ -1639,7 +1644,7 @@ export class CollectorWalletService {
         role: user?.role,
         commissionPercentage,
       },
-      cobrado: totalAmountCollected, // Pagos de préstamos en el rango
+      cobrado: totalCollections, // Pagos de préstamos en el rango (suma bruta)
       gastado: totalExpenses, // Gastos de rutas en el rango
       prestado: totalLoanedFromTransactions, // Monto prestado (desde transacciones de collector wallet)
       retirado: totalWithdrawals, // Retiros de la wallet de cobros del manager
@@ -1647,7 +1652,7 @@ export class CollectorWalletService {
       neto: Number(neto.toFixed(2)), // cobrado - gastado - prestado - retirado + ajusteCaja
       commission: {
         percentage: commissionPercentage,
-        baseAmount: totalAmountCollected, // Base solo en lo cobrado
+        baseAmount: totalCollections, // Base solo en lo cobrado
         commissionAmount: Number(commissionAmount.toFixed(2)),
       },
       // Datos adicionales para compatibilidad
@@ -1719,7 +1724,7 @@ export class CollectorWalletService {
         })),
       },
       summary: {
-        cobrado: totalAmountCollected,
+        cobrado: totalAmountCollected, // Suma bruta de pagos
         gastado: totalExpenses,
         prestado: totalLoanedFromTransactions,
         retirado: totalWithdrawals,
@@ -2922,6 +2927,7 @@ export class CollectorWalletService {
     // 3. Calcular "dinero en calle" = suma del monto pendiente de subloans no completamente pagados
     // Considera pagos parciales: dineroEnCalle = totalAmount - paidAmount para cada subloan no pagado
     let dineroEnCalle = 0;
+    let dineroPrestado = 0;
     for (const loan of loans) {
       for (const subLoan of loan.subLoans) {
         // Solo contar subloans que no están completamente pagados
@@ -2931,6 +2937,7 @@ export class CollectorWalletService {
           const paidAmount = Number(subLoan.paidAmount);
           const pendingAmount = totalAmount - paidAmount;
           dineroEnCalle += pendingAmount;
+          dineroPrestado += Number(subLoan.amount);
         }
       }
     }
@@ -2946,6 +2953,7 @@ export class CollectorWalletService {
         availableClientQuota: manager.clientQuota - manager.usedClientQuota,
       },
       dineroEnCalle: Number(dineroEnCalle.toFixed(2)),
+      dineroPrestado: Number(dineroPrestado.toFixed(2)),
       totalLoans: loans.length,
       loans: loans.map((loan) => ({
         id: loan.id,
