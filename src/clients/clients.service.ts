@@ -450,26 +450,29 @@ export class ClientsService {
       );
     }
 
-    // Función auxiliar para realizar la búsqueda con el include común
-    const searchClient = async (whereClause: any) => {
-      return await this.prisma.client.findFirst({
-        where: { ...whereClause, deletedAt: null },
-      include: {
-        managers: {
-          where: { deletedAt: null },
-          include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-                role: true,
-              },
+    // Include común para las búsquedas
+    const clientInclude = {
+      managers: {
+        where: { deletedAt: null },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              role: true,
             },
           },
         },
       },
-    });
+    };
+
+    // Función auxiliar para realizar la búsqueda y devolver todos los matches
+    const searchClients = async (whereClause: any) => {
+      return await this.prisma.client.findMany({
+        where: { ...whereClause, deletedAt: null },
+        include: clientInclude,
+      });
     };
 
     // Función auxiliar para validar acceso al cliente
@@ -504,45 +507,42 @@ export class ClientsService {
       return false;
     };
 
+    // Buscar el primer cliente accesible entre los resultados
+    const findAccessible = async (clients: any[]) => {
+      for (const client of clients) {
+        if (await validateAccess(client)) {
+          return client;
+        }
+      }
+      return null;
+    };
+
     let client: any = null;
 
     // 1. Buscar primero por nombre (si se proporciona)
     if (name) {
-      client = await searchClient({
+      const clients = await searchClients({
         fullName: {
           contains: name,
           mode: 'insensitive',
         },
       });
-      if (client && (await validateAccess(client))) {
-    return client;
-      } else if (client) {
-        client = null; // Continuar buscando
-      }
+      client = await findAccessible(clients);
+      if (client) return client;
     }
 
     // 2. Si no se encontró por nombre, buscar por DNI (si se proporciona)
     if (dni) {
-      client = await searchClient({
-        dni: dni,
-      });
-      if (client && (await validateAccess(client))) {
-        return client;
-      } else if (client) {
-        client = null; // Continuar buscando
-      }
+      const clients = await searchClients({ dni });
+      client = await findAccessible(clients);
+      if (client) return client;
     }
 
     // 3. Si no se encontró por DNI, buscar por CUIT (si se proporciona)
     if (cuit) {
-      client = await searchClient({
-        cuit: cuit,
-      });
-      if (client && (await validateAccess(client))) {
-        return client;
-      } else if (client) {
-        client = null; // Continuar buscando
-      }
+      const clients = await searchClients({ cuit });
+      client = await findAccessible(clients);
+      if (client) return client;
     }
 
     // Si no se encontró nada después de todas las búsquedas
