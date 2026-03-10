@@ -1211,9 +1211,10 @@ export class PaymentsService {
         where: { subLoanId },
       });
 
-      // 3b. Revertir cuotas adicionales pagadas por el mismo payment (adelantos)
-      // Usamos sourcePaymentId en paymentHistory para encontrar subloans afectados.
-      const sourcePaymentId = lastPayment.id;
+      // 3b. Revertir cuotas adicionales pagadas por cualquier payment de este SubLoan (adelantos)
+      // Recolectar todos los sourcePaymentIds de los payments que se están reseteando,
+      // no solo el último, para cubrir el caso donde múltiples pagos generaron excedentes.
+      const allPaymentIds = subLoan.payments.map((p) => p.id);
       const loanSubLoans = await tx.subLoan.findMany({
         where: {
           loanId: subLoan.loanId,
@@ -1235,7 +1236,10 @@ export class PaymentsService {
           ? (sl.paymentHistory as any[])
           : [];
         const relatedEntries = hist.filter(
-          (h: any) => h && typeof h === 'object' && h.sourcePaymentId === sourcePaymentId,
+          (h: any) =>
+            h &&
+            typeof h === 'object' &&
+            allPaymentIds.includes(h.sourcePaymentId),
         );
         if (relatedEntries.length === 0) continue;
 
@@ -1254,13 +1258,23 @@ export class PaymentsService {
               ? SubLoanStatus.PAID
               : SubLoanStatus.PARTIAL;
 
+        // Filtrar del historial todas las entradas relacionadas con los payments reseteados
+        const cleanedHistory = hist.filter(
+          (h: any) =>
+            !(
+              h &&
+              typeof h === 'object' &&
+              allPaymentIds.includes(h.sourcePaymentId)
+            ),
+        );
+
         await tx.subLoan.update({
           where: { id: sl.id },
           data: {
             paidAmount: new Prisma.Decimal(newPaid),
             status: newStatus,
             paidDate: newStatus === SubLoanStatus.PAID ? sl.paidDate : null,
-            paymentHistory: this.removePaymentFromHistory(hist, sourcePaymentId),
+            paymentHistory: cleanedHistory,
           },
         });
       }
