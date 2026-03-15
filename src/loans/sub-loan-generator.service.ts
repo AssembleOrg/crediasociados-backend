@@ -7,6 +7,7 @@ import {
   Prisma,
   SubLoanStatus,
 } from '@prisma/client';
+import { DateTime } from 'luxon';
 import { DateUtil } from '../common/utils';
 
 @Injectable()
@@ -98,6 +99,7 @@ export class SubLoanGeneratorService {
 
   /**
    * Calcula las fechas de vencimiento para todos los SubLoans
+   * Usa Luxon en zona horaria Argentina para evitar desfases UTC.
    */
   private calculateDueDates(
     totalPayments: number,
@@ -105,105 +107,81 @@ export class SubLoanGeneratorService {
     paymentDay?: PaymentDay,
     firstDueDate?: Date,
   ): Date[] {
-    const dueDates: Date[] = [];
-    
-    // Determinar la fecha inicial
-    let startDate: Date;
-    
+    const tz = DateUtil.BUENOS_AIRES_TIMEZONE;
+    const dueDates: DateTime[] = [];
+
+    // Determinar la fecha inicial en zona Argentina
+    let start: DateTime;
+
     if (firstDueDate) {
-      // Si se especifica firstDueDate, convertirla a zona horaria de Argentina
-      startDate = DateUtil.fromPrismaDate(firstDueDate).toJSDate();
+      start = DateTime.fromJSDate(firstDueDate).setZone(tz).startOf('day');
     } else {
-      // Si NO se especifica, usar el DÍA SIGUIENTE a hoy (en zona horaria Argentina)
-      const tomorrow = DateUtil.now().plus({ days: 1 }).toJSDate();
-      startDate = tomorrow;
-      
-      // Para pagos DIARIOS, la primera cuota es mañana
-      // Para pagos SEMANALES, QUINCENALES o MENSUALES, respetar el paymentDay si está especificado
+      // Día siguiente a hoy en Argentina
+      start = DateUtil.now().plus({ days: 1 }).startOf('day');
+
+      // Para frecuencias no diarias, respetar el paymentDay
       if (paymentFrequency !== 'DAILY' && paymentDay) {
-        this.setToDayOfWeek(startDate, paymentDay);
-        
+        const targetDay = this.getDayOfWeekNumber(paymentDay);
+        const currentDay = start.weekday; // Luxon: 1=Lun … 7=Dom
+        let daysToAdd = targetDay - currentDay;
+        if (daysToAdd < 0) daysToAdd += 7;
+        start = start.plus({ days: daysToAdd });
+
         // Si el día ya pasó esta semana, mover a la próxima
-        const today = DateUtil.now().toJSDate();
-        if (startDate <= today) {
-          startDate.setDate(startDate.getDate() + 7);
+        const today = DateUtil.now().startOf('day');
+        if (start <= today) {
+          start = start.plus({ days: 7 });
         }
       }
     }
 
-    // Ajustar la fecha de inicio si cae en domingo
-    startDate = this.adjustSundayToMonday(startDate);
+    // Ajustar si cae en domingo
+    start = this.adjustSunday(start);
 
     for (let i = 0; i < totalPayments; i++) {
-      let dueDate = new Date(startDate);
+      let dueDate: DateTime;
 
-      // Ajustar la fecha según la frecuencia de pago
       switch (paymentFrequency) {
         case 'DAILY':
-          // Para pagos diarios, agregar días uno a uno
-          dueDate.setDate(startDate.getDate() + i);
-          // Ajustar domingos inmediatamente
-          dueDate = this.adjustSundayToMonday(dueDate);
+          dueDate = start.plus({ days: i });
+          dueDate = this.adjustSunday(dueDate);
           break;
 
         case 'WEEKLY':
-          // Para pagos semanales, agregar 7 días por cada cuota
-          dueDate.setDate(startDate.getDate() + i * 7);
-          // Ajustar domingos
-          dueDate = this.adjustSundayToMonday(dueDate);
+          dueDate = start.plus({ weeks: i });
+          dueDate = this.adjustSunday(dueDate);
           break;
 
         case 'BIWEEKLY':
-          // Para pagos quincenales, agregar 14 días por cada cuota
-          dueDate.setDate(startDate.getDate() + i * 14);
-          // Ajustar domingos
-          dueDate = this.adjustSundayToMonday(dueDate);
+          dueDate = start.plus({ weeks: i * 2 });
+          dueDate = this.adjustSunday(dueDate);
           break;
 
         case 'MONTHLY':
-          // Para pagos mensuales, agregar meses
-          dueDate.setMonth(startDate.getMonth() + i);
-          // Si el día no existe en el mes (ej: 31 de febrero), ajustar al último día del mes
-          if (dueDate.getDate() !== startDate.getDate()) {
-            dueDate.setDate(0); // Último día del mes anterior
-          }
-          // Ajustar domingos
-          dueDate = this.adjustSundayToMonday(dueDate);
+          dueDate = start.plus({ months: i });
+          // Si el día no existe en el mes, Luxon ya ajusta al último día válido
+          dueDate = this.adjustSunday(dueDate);
+          break;
+
+        default:
+          dueDate = start.plus({ days: i });
           break;
       }
 
-      // Verificar que no haya fechas duplicadas (solo necesario para DAILY que puede tener ajustes de domingo)
+      // Para DAILY, asegurar que no haya fechas duplicadas (por ajuste de domingo)
       if (paymentFrequency === 'DAILY') {
-        dueDate = this.ensureUniqueDate(dueDate, dueDates);
+        dueDate = this.ensureUniqueDateLuxon(dueDate, dueDates);
       }
 
       dueDates.push(dueDate);
     }
 
-    return dueDates;
+    // Convertir a JS Date al mediodía Argentina para evitar desfases UTC
+    return dueDates.map((dt) => dt.set({ hour: 12, minute: 0, second: 0, millisecond: 0 }).toJSDate());
   }
 
   /**
-   * Ajusta la fecha al día específico de la semana
-   */
-  private setToDayOfWeek(date: Date, paymentDay: PaymentDay): void {
-    const targetDay = this.getDayOfWeekNumber(paymentDay);
-    const currentDay = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-
-    // Convert to our system where 1 = Monday, 2 = Tuesday, ..., 6 = Saturday, 0 = Sunday
-    const currentDayAdjusted = currentDay === 0 ? 7 : currentDay;
-
-    // Calculate the difference and adjust
-    let daysToAdd = targetDay - currentDayAdjusted;
-    if (daysToAdd < 0) {
-      daysToAdd += 7; // Move to next week
-    }
-
-    date.setDate(date.getDate() + daysToAdd);
-  }
-
-  /**
-   * Convierte PaymentDay enum a número de día de la semana (1-7, where 1=Monday, 7=Sunday)
+   * Convierte PaymentDay enum a número de día Luxon (1=Lunes … 6=Sábado)
    */
   private getDayOfWeekNumber(paymentDay: PaymentDay): number {
     const dayMap = {
@@ -219,44 +197,26 @@ export class SubLoanGeneratorService {
   }
 
   /**
-   * Ajusta una fecha que cae en domingo al lunes siguiente
+   * Ajusta una fecha que cae en domingo (weekday 7) al lunes siguiente
    */
-  private adjustSundayToMonday(date: Date): Date {
-    const adjustedDate = new Date(date);
-
-    // Si la fecha cae en domingo (day = 0), moverla al lunes siguiente
-    if (adjustedDate.getDay() === 0) {
-      adjustedDate.setDate(adjustedDate.getDate() + 1);
+  private adjustSunday(dt: DateTime): DateTime {
+    if (dt.weekday === 7) {
+      return dt.plus({ days: 1 });
     }
-
-    return adjustedDate;
+    return dt;
   }
 
   /**
    * Asegura que la fecha sea única comparándola con las fechas existentes
    */
-  private ensureUniqueDate(newDate: Date, existingDates: Date[]): Date {
-    let adjustedDate = new Date(newDate);
+  private ensureUniqueDateLuxon(newDate: DateTime, existingDates: DateTime[]): DateTime {
+    let adjusted = newDate;
 
-    // Verificar si la fecha ya existe
-    while (this.isDateInArray(adjustedDate, existingDates)) {
-      // Si la fecha ya existe, moverla al día siguiente
-      adjustedDate.setDate(adjustedDate.getDate() + 1);
-
-      // Verificar nuevamente si el nuevo día es domingo y ajustarlo
-      adjustedDate = this.adjustSundayToMonday(adjustedDate);
+    while (existingDates.some((d) => d.hasSame(adjusted, 'day'))) {
+      adjusted = adjusted.plus({ days: 1 });
+      adjusted = this.adjustSunday(adjusted);
     }
 
-    return adjustedDate;
-  }
-
-  /**
-   * Verifica si una fecha ya existe en el array de fechas
-   */
-  private isDateInArray(date: Date, dateArray: Date[]): boolean {
-    const dateString = date.toDateString();
-    return dateArray.some(
-      (existingDate) => existingDate.toDateString() === dateString,
-    );
+    return adjusted;
   }
 }
