@@ -34,14 +34,7 @@ export class SubLoansService {
           },
           loan: {
             deletedAt: null,
-            client: {
-              managers: {
-                some: {
-                  userId: userId,
-                  deletedAt: null,
-                },
-              },
-            },
+            managerId: userId,
           },
         },
         include: {
@@ -87,14 +80,7 @@ export class SubLoansService {
           },
           loan: {
             deletedAt: null,
-            client: {
-              managers: {
-                some: {
-                  userId: userId,
-                  deletedAt: null,
-                },
-              },
-            },
+            managerId: userId,
           },
         },
       }),
@@ -211,14 +197,7 @@ export class SubLoansService {
         },
         loan: {
           deletedAt: null,
-          client: {
-            managers: {
-              some: {
-                userId: userId,
-                deletedAt: null,
-              },
-            },
-          },
+          managerId: userId,
         },
       },
       _count: {

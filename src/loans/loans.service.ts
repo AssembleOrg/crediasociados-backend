@@ -235,14 +235,7 @@ export class LoansService {
     const loans = await this.prisma.loan.findMany({
       where: {
         deletedAt: null,
-        client: {
-          managers: {
-            some: {
-              userId: userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
       },
       select: {
         id: true,
@@ -322,14 +315,7 @@ export class LoansService {
     const loans = await this.prisma.loan.findMany({
       where: {
         deletedAt: null,
-        client: {
-          managers: {
-            some: {
-              userId: userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
       },
       select: {
         id: true,
@@ -404,14 +390,7 @@ export class LoansService {
     const total = await this.prisma.loan.count({
       where: {
         deletedAt: null,
-        client: {
-          managers: {
-            some: {
-              userId: userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
       },
     });
 
@@ -433,14 +412,7 @@ export class LoansService {
       where: {
         id: loanId,
         deletedAt: null,
-        client: {
-          managers: {
-            some: {
-              userId: userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
       },
       include: {
         client: {
@@ -478,14 +450,7 @@ export class LoansService {
       where: {
         id: loanId,
         deletedAt: null,
-        client: {
-          managers: {
-            some: {
-              userId: userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
       },
     });
 
@@ -517,45 +482,20 @@ export class LoansService {
       deletedAt: null,
     };
 
-    // Construir filtro de cliente base (se aplicará después si no hay clientName)
-    let baseClientFilter: any = null;
-
     // Filtros de acceso por rol
     if (userRole === UserRole.MANAGER) {
-      // MANAGER: solo sus clientes
-      baseClientFilter = {
-        managers: {
-          some: {
-            userId: userId,
-            deletedAt: null,
-          },
-        },
-      };
+      // MANAGER: solo sus préstamos
+      whereClause.managerId = userId;
     } else if (userRole === UserRole.SUBADMIN) {
-      // SUBADMIN: clientes de sus managers
+      // SUBADMIN: préstamos de sus managers
       const managedUserIds = await this.getManagedUserIds(userId);
-      baseClientFilter = {
-        managers: {
-          some: {
-            userId: { in: managedUserIds },
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = { in: managedUserIds };
     }
     // ADMIN y SUPERADMIN ven todos los préstamos (no aplican filtro base)
 
     // Aplicar filtros adicionales
     if (filters.managerId) {
-      whereClause.client = {
-        ...whereClause.client,
-        managers: {
-          some: {
-            userId: filters.managerId,
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = filters.managerId;
     }
 
     if (filters.clientId) {
@@ -633,34 +573,14 @@ export class LoansService {
 
     // Búsqueda parcial por nombre de cliente
     if (filters.clientName && filters.clientName.length >= 2) {
-      // Construir el filtro de cliente con búsqueda por nombre
-      const clientFilter: any = {
+      whereClause.client = {
+        ...whereClause.client,
         fullName: {
           contains: filters.clientName,
           mode: 'insensitive',
         },
         deletedAt: null,
       };
-
-      // Combinar con los filtros de acceso por rol
-      if (baseClientFilter) {
-        clientFilter.managers = baseClientFilter.managers;
-      }
-
-      // Si ya hay un filtro de cliente (por managerId o clientId), combinarlo
-      if (whereClause.client) {
-        whereClause.client = {
-          ...whereClause.client,
-          ...clientFilter,
-          // Mantener managers si ya existe
-          managers: whereClause.client.managers || clientFilter.managers,
-        };
-      } else {
-        whereClause.client = clientFilter;
-      }
-    } else if (baseClientFilter && !whereClause.client) {
-      // Si no hay búsqueda por nombre pero hay filtro de acceso por rol, aplicarlo
-      whereClause.client = baseClientFilter;
     }
 
     const [loans, total] = await Promise.all([
@@ -726,37 +646,15 @@ export class LoansService {
 
     // Filtros de acceso por rol
     if (userRole === UserRole.MANAGER) {
-      whereClause.client = {
-        managers: {
-          some: {
-            userId: userId,
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = userId;
     } else if (userRole === UserRole.SUBADMIN) {
       const managedUserIds = await this.getManagedUserIds(userId);
-      whereClause.client = {
-        managers: {
-          some: {
-            userId: { in: managedUserIds },
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = { in: managedUserIds };
     }
 
     // Aplicar filtros adicionales
     if (filters.managerId) {
-      whereClause.client = {
-        ...whereClause.client,
-        managers: {
-          some: {
-            userId: filters.managerId,
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = filters.managerId;
     }
 
     if (filters.clientId) {
@@ -929,8 +827,7 @@ export class LoansService {
     }
 
     // Verificar que el usuario tenga permisos
-    const isManager = loan.client.managers.some((m) => m.userId === userId);
-    if (!isManager) {
+    if (loan.managerId !== userId) {
       throw new ForbiddenException(
         'No tienes permisos para eliminar este préstamo',
       );
@@ -1134,14 +1031,7 @@ export class LoansService {
 
     if (userRole === UserRole.MANAGER) {
       // MANAGER solo ve sus préstamos
-      whereClause.client = {
-        managers: {
-          some: {
-            userId,
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = userId;
     } else if (userRole === UserRole.SUBADMIN) {
       // SUBADMIN ve préstamos de sus managers
       const managers = await this.prisma.user.findMany({
@@ -1154,15 +1044,7 @@ export class LoansService {
       });
 
       const managerIds = managers.map((m) => m.id);
-
-      whereClause.client = {
-        managers: {
-          some: {
-            userId: { in: managerIds },
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = { in: managerIds };
     }
     // ADMIN/SUPERADMIN: no filtran, ven todos
 
@@ -1251,26 +1133,12 @@ export class LoansService {
 
     // Filtros de acceso por rol
     if (userRole === UserRole.MANAGER) {
-      // MANAGER: solo sus clientes
-      whereClause.client = {
-        managers: {
-          some: {
-            userId: userId,
-            deletedAt: null,
-          },
-        },
-      };
+      // MANAGER: solo sus préstamos
+      whereClause.managerId = userId;
     } else if (userRole === UserRole.SUBADMIN) {
-      // SUBADMIN: clientes de sus managers
+      // SUBADMIN: préstamos de sus managers
       const managedUserIds = await this.getManagedUserIds(userId);
-      whereClause.client = {
-        managers: {
-          some: {
-            userId: { in: managedUserIds },
-            deletedAt: null,
-          },
-        },
-      };
+      whereClause.managerId = { in: managedUserIds };
     }
     // ADMIN y SUPERADMIN ven todos los préstamos
 

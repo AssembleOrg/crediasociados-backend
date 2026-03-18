@@ -543,13 +543,7 @@ export class WalletService {
     const { userId, amount, type, description, transaction } = params;
     const tx = transaction || this.prisma;
 
-    const wallet = await tx.wallet.findUnique({
-      where: { userId },
-    });
-
-    if (!wallet) {
-      throw new NotFoundException('Cartera no encontrada');
-    }
+    const wallet = await this.getOrCreateWallet(userId, tx);
 
     // NO SE VALIDA SALDO - Se permite saldo negativo en la wallet principal
     // Los managers pueden operar con saldo negativo
@@ -586,6 +580,27 @@ export class WalletService {
   /**
    * Acreditar a cartera (uso interno para pagos)
    */
+  private async getOrCreateWallet(
+    userId: string,
+    tx: any,
+  ): Promise<any> {
+    let wallet = await tx.wallet.findUnique({
+      where: { userId },
+    });
+
+    if (!wallet) {
+      wallet = await tx.wallet.create({
+        data: {
+          userId,
+          balance: new Prisma.Decimal(0),
+          currency: Currency.ARS,
+        },
+      });
+    }
+
+    return wallet;
+  }
+
   async credit(params: {
     userId: string;
     amount: number;
@@ -596,13 +611,7 @@ export class WalletService {
     const { userId, amount, type, description, transaction } = params;
     const tx = transaction || this.prisma;
 
-    const wallet = await tx.wallet.findUnique({
-      where: { userId },
-    });
-
-    if (!wallet) {
-      throw new NotFoundException('Cartera no encontrada');
-    }
+    const wallet = await this.getOrCreateWallet(userId, tx);
 
     const balanceBefore = Number(wallet.balance);
 

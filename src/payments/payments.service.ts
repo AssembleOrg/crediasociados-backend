@@ -57,15 +57,10 @@ export class PaymentsService {
       throw new BadRequestException('SubLoan eliminado');
     }
 
-    // Validar que el usuario tenga acceso
-
-    console.table({ userRole, userId });
+    // Validar que el usuario tenga acceso al préstamo
     if (userRole === UserRole.MANAGER) {
-      const hasAccess = subLoan.loan.client.managers.some(
-        (m) => m.userId === userId,
-      );
-      if (!hasAccess) {
-        throw new ForbiddenException('No tienes acceso a este SubLoan');
+      if (subLoan.loan.managerId !== userId) {
+        throw new ForbiddenException('No tienes acceso a este préstamo');
       }
     }
 
@@ -857,11 +852,8 @@ export class PaymentsService {
 
     // Validar acceso
     if (userRole === UserRole.MANAGER) {
-      const hasAccess = subLoan.loan.client.managers.some(
-        (m) => m.userId === userId,
-      );
-      if (!hasAccess) {
-        throw new ForbiddenException('No tienes acceso a este SubLoan');
+      if (subLoan.loan.managerId !== userId) {
+        throw new ForbiddenException('No tienes acceso a este préstamo');
       }
     }
 
@@ -997,11 +989,8 @@ export class PaymentsService {
 
     // Validar acceso
     if (userRole === UserRole.MANAGER) {
-      const hasAccess = subLoan.loan.client.managers.some(
-        (m) => m.userId === userId,
-      );
-      if (!hasAccess) {
-        throw new ForbiddenException('No tienes acceso a este SubLoan');
+      if (subLoan.loan.managerId !== userId) {
+        throw new ForbiddenException('No tienes acceso a este préstamo');
       }
     }
 
@@ -1466,11 +1455,8 @@ export class PaymentsService {
 
     // Validar que el usuario tenga acceso
     if (userRole === UserRole.MANAGER) {
-      const hasAccess = subLoan.loan.client.managers.some(
-        (m) => m.userId === userId,
-      );
-      if (!hasAccess) {
-        throw new ForbiddenException('No tienes acceso a este SubLoan');
+      if (subLoan.loan.managerId !== userId) {
+        throw new ForbiddenException('No tienes acceso a este préstamo');
       }
     }
 

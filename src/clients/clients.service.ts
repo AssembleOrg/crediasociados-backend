@@ -254,7 +254,10 @@ export class ClientsService {
           },
         },
         loans: {
-          where: { deletedAt: null },
+          where: {
+            deletedAt: null,
+            ...(userRole === UserRole.MANAGER ? { managerId: userId } : {}),
+          },
           select: {
             id: true,
             amount: true,
@@ -271,7 +274,12 @@ export class ClientsService {
         },
         _count: {
           select: {
-            loans: true,
+            loans: {
+              where: {
+                deletedAt: null,
+                ...(userRole === UserRole.MANAGER ? { managerId: userId } : {}),
+              },
+            },
             transactions: true,
           },
         },
@@ -395,10 +403,11 @@ export class ClientsService {
       );
     }
 
-    // Verificar si el cliente tiene préstamos activos
+    // Verificar si el manager tiene préstamos activos con este cliente
     const activeLoans = await this.prisma.loan.findMany({
       where: {
         clientId: id,
+        managerId: userId,
         deletedAt: null,
         status: {
           in: [
@@ -423,18 +432,27 @@ export class ClientsService {
       );
     }
 
-    // Hard delete - elimina permanentemente el cliente y sus relaciones
-    // Primero eliminar la relación client-manager
+    // Eliminar la relación client-manager de este manager
     await this.prisma.clientManager.delete({
       where: { id: clientManager.id },
     });
 
-    // Luego eliminar el cliente
-    await this.prisma.client.delete({
-      where: { id },
+    // Solo eliminar el cliente si no queda ningún otro manager asignado
+    const remainingManagers = await this.prisma.clientManager.count({
+      where: {
+        clientId: id,
+        deletedAt: null,
+      },
     });
 
-    return { message: 'Cliente eliminado exitosamente' };
+    if (remainingManagers === 0) {
+      await this.prisma.client.delete({
+        where: { id },
+      });
+      return { message: 'Cliente eliminado exitosamente' };
+    }
+
+    return { message: 'Cliente desvinculado exitosamente' };
   }
 
   async searchByDniOrCuit(
