@@ -1621,8 +1621,8 @@ export class CollectionRoutesService {
     const targetDate = new Date(newDueDate);
     targetDate.setHours(0, 0, 0, 0);
 
-    if (targetDate <= today) {
-      throw new BadRequestException('La fecha debe ser posterior a hoy');
+    if (targetDate < today) {
+      throw new BadRequestException('La fecha no puede ser anterior a hoy');
     }
 
     // Buscar el item con su ruta y subloan
@@ -1652,14 +1652,29 @@ export class CollectionRoutesService {
       throw new BadRequestException('Este item no tiene un subloan asociado');
     }
 
-    // Ejecutar en transaccion: actualizar fecha del subloan + eliminar item de la ruta
+    const isNewDateToday = targetDate.getTime() === today.getTime();
+
+    if (isNewDateToday) {
+      // Just update the dueDate, keep the item in today's route
+      await this.prisma.subLoan.update({
+        where: { id: item.subLoanId },
+        data: { dueDate: new Date(newDueDate + 'T12:00:00') },
+      });
+
+      return {
+        message: 'Fecha actualizada. La cuota permanece en la ruta de hoy.',
+        subLoanId: item.subLoanId,
+        newDueDate,
+        removedItemId: null,
+      };
+    }
+
+    // Future date: update subloan + remove from today's route
     await this.prisma.$transaction([
-      // Actualizar dueDate del subloan
       this.prisma.subLoan.update({
         where: { id: item.subLoanId },
         data: { dueDate: new Date(newDueDate + 'T12:00:00') },
       }),
-      // Eliminar el item de la ruta
       this.prisma.collectionRouteItem.delete({
         where: { id: itemId },
       }),

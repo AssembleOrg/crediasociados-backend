@@ -487,6 +487,19 @@ export class LoansController {
     return this.loansService.updateDescription(id, req.user.id, dto.description || '');
   }
 
+  @Get('dashboard-stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Stats livianas para el dashboard del prestamista',
+    description: 'Retorna loans por semana + distribucion de subloans por status. Sin datos pesados.',
+  })
+  @ApiResponse({ status: 200, description: 'Stats obtenidas exitosamente' })
+  async getDashboardStats(@Request() req) {
+    return this.loansService.getDashboardStats(req.user.id);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(

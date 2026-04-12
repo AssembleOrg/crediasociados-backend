@@ -31,6 +31,7 @@ async function bootstrap() {
       'http://127.0.0.1:3001',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:8080',
+      'https://inspiring-sparkle-production-c2b4.up.railway.app/'
     ],
     credentials: true, // Allow cookies/auth headers
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

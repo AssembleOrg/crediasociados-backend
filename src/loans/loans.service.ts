@@ -331,6 +331,57 @@ export class LoansService {
   }
 
   /**
+   * Lightweight dashboard stats: loans per week + subloan status distribution.
+   * 2 small queries instead of loading 700+ loans with all subloans.
+   */
+  async getDashboardStats(userId: string) {
+    // Query 1: Loans created per week (last 8 weeks)
+    const eightWeeksAgo = new Date();
+    eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 56);
+
+    const recentLoans = await this.prisma.loan.findMany({
+      where: {
+        managerId: userId,
+        deletedAt: null,
+        createdAt: { gte: eightWeeksAgo },
+      },
+      select: { createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const loansByWeek: Record<string, number> = {};
+    for (const loan of recentLoans) {
+      const d = new Date(loan.createdAt);
+      d.setDate(d.getDate() - d.getDay() + 1);
+      const weekKey = d.toISOString().split('T')[0];
+      loansByWeek[weekKey] = (loansByWeek[weekKey] || 0) + 1;
+    }
+    const loansEvolution = Object.entries(loansByWeek)
+      .map(([date, count]) => ({ date, loans: count }))
+      .slice(-8);
+
+    // Query 2: Subloan status distribution (count only)
+    const statusCounts = await this.prisma.subLoan.groupBy({
+      by: ['status'],
+      where: {
+        deletedAt: null,
+        loan: { managerId: userId, deletedAt: null },
+      },
+      _count: true,
+    });
+
+    const paymentsDistribution = statusCounts.map((s) => ({
+      status: s.status,
+      count: s._count,
+    }));
+
+    return {
+      loansEvolution,
+      paymentsDistribution,
+    };
+  }
+
+  /**
    * One-time fix: mark all ACTIVE loans with all PAID subloans as COMPLETED.
    */
   async fixCompletePaidLoans() {
