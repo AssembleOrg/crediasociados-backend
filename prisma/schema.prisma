@@ -134,6 +134,7 @@ model SubLoan {
   paymentNumber       Int
   amount              Decimal               @db.Decimal(40, 2)
   totalAmount         Decimal               @db.Decimal(40, 2)
+  originalTotalAmount Decimal?              @db.Decimal(40, 2) // Valor original antes de ajustes de interes
   status              SubLoanStatus         @default(PENDING)
   dueDate             DateTime
   paidDate            DateTime?
@@ -607,4 +608,17 @@ enum SafeTransactionType {
   TRANSFER_FROM_COLLECTOR // Transferencia desde wallet de cobros (retiro)
   TRANSFER_TO_SAFE // Transferencia a otra caja fuerte
   TRANSFER_FROM_SAFE // Transferencia desde otra caja fuerte
+}
+
+model BlacklistedClient {
+  id        String   @id @default(cuid())
+  dni       String
+  fullName  String
+  reason    String
+  createdBy String // userId del subadmin que lo agrego
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dni])
+  @@map("blacklisted_clients")
 }

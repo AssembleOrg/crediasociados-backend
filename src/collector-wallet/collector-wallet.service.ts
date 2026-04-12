@@ -2843,15 +2843,76 @@ export class CollectorWalletService {
       };
     });
 
+    // Batch: obtener dinero en calle (totalPending) para todos los managers
+    const allActiveLoans = await this.prisma.loan.findMany({
+      where: {
+        managerId: { in: managerIds },
+        deletedAt: null,
+        status: 'ACTIVE',
+      },
+      select: {
+        managerId: true,
+        amount: true,
+        subLoans: {
+          where: { deletedAt: null },
+          select: {
+            totalAmount: true,
+            paidAmount: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    const dineroEnCalleByManager = new Map<string, number>();
+    const dineroPrestadoByManager = new Map<string, number>();
+    for (const loan of allActiveLoans) {
+      if (!loan.managerId) continue;
+      const pending = loan.subLoans.reduce(
+        (sum, sl) => sum + Math.max(0, Number(sl.totalAmount) - Number(sl.paidAmount)),
+        0,
+      );
+      dineroEnCalleByManager.set(
+        loan.managerId,
+        (dineroEnCalleByManager.get(loan.managerId) || 0) + pending,
+      );
+      dineroPrestadoByManager.set(
+        loan.managerId,
+        (dineroPrestadoByManager.get(loan.managerId) || 0) + Number(loan.amount),
+      );
+    }
+
+    // Batch: obtener safe balances
+    const safes = await this.prisma.safe.findMany({
+      where: {
+        userId: { in: managerIds },
+      },
+      select: {
+        userId: true,
+        balance: true,
+      },
+    });
+    const safeByManager = new Map<string, number>();
+    for (const safe of safes) {
+      safeByManager.set(safe.userId, Number(safe.balance));
+    }
+
     const totalBalance = managersWithBalances.reduce(
       (sum, m) => sum + m.collectorWallet.balance,
       0,
     );
 
+    const enrichedManagers = managersWithBalances.map((m) => ({
+      ...m,
+      dineroEnCalle: dineroEnCalleByManager.get(m.managerId) || 0,
+      dineroPrestado: dineroPrestadoByManager.get(m.managerId) || 0,
+      safeBalance: safeByManager.get(m.managerId) || 0,
+    }));
+
     return {
-      total: managersWithBalances.length,
+      total: enrichedManagers.length,
       totalBalance,
-      managers: managersWithBalances,
+      managers: enrichedManagers,
     };
   }
 

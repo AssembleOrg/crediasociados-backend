@@ -1610,5 +1610,67 @@ export class CollectionRoutesService {
       expenses: transformedExpenses,
     };
   }
+
+  /**
+   * Reprogramar una cuota: cambiar su dueDate y eliminar el item de la ruta del dia.
+   */
+  async rescheduleRouteItem(itemId: string, userId: string, newDueDate: string) {
+    // Validar que la fecha sea futura
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const targetDate = new Date(newDueDate);
+    targetDate.setHours(0, 0, 0, 0);
+
+    if (targetDate <= today) {
+      throw new BadRequestException('La fecha debe ser posterior a hoy');
+    }
+
+    // Buscar el item con su ruta y subloan
+    const item = await this.prisma.collectionRouteItem.findUnique({
+      where: { id: itemId },
+      include: {
+        route: true,
+        subLoan: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException('Item de ruta no encontrado');
+    }
+
+    // Verificar que la ruta pertenece al manager
+    if (item.route.managerId !== userId) {
+      throw new ForbiddenException('No tienes acceso a este item');
+    }
+
+    // Verificar que la ruta esta activa
+    if (item.route.status !== 'ACTIVE') {
+      throw new BadRequestException('Solo se pueden reprogramar items de rutas activas');
+    }
+
+    if (!item.subLoanId || !item.subLoan) {
+      throw new BadRequestException('Este item no tiene un subloan asociado');
+    }
+
+    // Ejecutar en transaccion: actualizar fecha del subloan + eliminar item de la ruta
+    await this.prisma.$transaction([
+      // Actualizar dueDate del subloan
+      this.prisma.subLoan.update({
+        where: { id: item.subLoanId },
+        data: { dueDate: new Date(newDueDate + 'T12:00:00') },
+      }),
+      // Eliminar el item de la ruta
+      this.prisma.collectionRouteItem.delete({
+        where: { id: itemId },
+      }),
+    ]);
+
+    return {
+      message: 'Cuota reprogramada y eliminada de la ruta',
+      subLoanId: item.subLoanId,
+      newDueDate,
+      removedItemId: itemId,
+    };
+  }
 }
 

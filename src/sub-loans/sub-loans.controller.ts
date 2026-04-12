@@ -1,10 +1,13 @@
 import {
   Controller,
   Get,
+  Patch,
   UseGuards,
   Request,
   Post,
   Query,
+  Param,
+  Body,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,6 +21,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums';
 import { SubLoansService } from './sub-loans.service';
+import { UpdateSubLoanDueDateDto, UpdateSubLoanPaidDateDto } from './dto/update-subloan-dates.dto';
 
 @ApiTags('SubLoans')
 @Controller('sub-loans')
@@ -25,6 +29,72 @@ import { SubLoansService } from './sub-loans.service';
 @ApiBearerAuth()
 export class SubLoansController {
   constructor(private readonly subLoansService: SubLoansService) {}
+
+  @Patch(':id/due-date')
+  @Roles(UserRole.MANAGER)
+  @ApiOperation({ summary: 'Actualizar fecha de vencimiento de un subloan' })
+  @ApiResponse({ status: 200, description: 'Fecha de vencimiento actualizada exitosamente' })
+  @ApiResponse({ status: 404, description: 'SubLoan no encontrado' })
+  async updateDueDate(
+    @Param('id') id: string,
+    @Body() dto: UpdateSubLoanDueDateDto,
+    @Request() req,
+  ) {
+    return this.subLoansService.updateDueDate(id, req.user.id, dto.dueDate);
+  }
+
+  @Patch(':id/paid-date')
+  @Roles(UserRole.MANAGER)
+  @ApiOperation({ summary: 'Actualizar fecha de pago de un subloan' })
+  @ApiResponse({ status: 200, description: 'Fecha de pago actualizada exitosamente' })
+  @ApiResponse({ status: 404, description: 'SubLoan no encontrado' })
+  async updatePaidDate(
+    @Param('id') id: string,
+    @Body() dto: UpdateSubLoanPaidDateDto,
+    @Request() req,
+  ) {
+    return this.subLoansService.updatePaidDate(id, req.user.id, dto.paidDate ?? null);
+  }
+
+  @Get('cobros')
+  @Roles(UserRole.MANAGER)
+  @ApiOperation({
+    summary: 'Obtener datos para la vista de cobros con filtros server-side',
+    description: 'Retorna subloans agrupados por cliente con stats, filtrados por urgencia/estado/cliente, paginados. Incluye stats globales para los botones de filtro.',
+  })
+  @ApiQuery({ name: 'urgency', required: false, enum: ['overdue', 'today', 'soon', 'future', 'all'] })
+  @ApiQuery({ name: 'paymentStatus', required: false, enum: ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE'] })
+  @ApiQuery({ name: 'clientId', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Datos de cobros obtenidos exitosamente' })
+  async getCobros(
+    @Request() req,
+    @Query('urgency') urgency?: string,
+    @Query('paymentStatus') paymentStatus?: string,
+    @Query('clientId') clientId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.subLoansService.getCobros(req.user.id, {
+      urgency: urgency as any,
+      paymentStatus: paymentStatus as any,
+      clientId,
+      page: page ? parseInt(page) : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  @Get('overdue-clients')
+  @Roles(UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.MANAGER)
+  @ApiOperation({
+    summary: 'Obtener clientes con cuotas vencidas agrupados por cliente',
+    description: 'Retorna clientes que tienen cuotas OVERDUE o PARTIAL, con detalle de préstamos y cuotas vencidas. SUBADMIN ve clientes de sus managers.',
+  })
+  @ApiResponse({ status: 200, description: 'Clientes con cuotas vencidas obtenidos exitosamente' })
+  async getOverdueClients(@Request() req) {
+    return this.subLoansService.getOverdueClients(req.user.id, req.user.role);
+  }
 
   @Get('today-due')
   @Roles(

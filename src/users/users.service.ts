@@ -758,6 +758,102 @@ export class UsersService {
     };
   }
 
+  /**
+   * Retorna stats agregadas de todos los managers de un subadmin en una sola query.
+   * Reemplaza N llamadas individuales a clients/chart + loans/chart.
+   */
+  async getSubadminManagersSummary(subadminId: string) {
+    const managers = await this.prisma.user.findMany({
+      where: {
+        createdById: subadminId,
+        role: UserRole.MANAGER,
+        deletedAt: null,
+      },
+      select: { id: true, fullName: true, email: true },
+    });
+
+    if (managers.length === 0) return [];
+
+    const managerIds = managers.map((m) => m.id);
+
+    // Obtener clientes y loans de TODOS los managers en una sola query cada una
+    const [clientsByManager, loansByManager] = await Promise.all([
+      this.prisma.client.findMany({
+        where: {
+          deletedAt: null,
+          managers: {
+            some: {
+              userId: { in: managerIds },
+              deletedAt: null,
+            },
+          },
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          managers: {
+            where: { userId: { in: managerIds }, deletedAt: null },
+            select: { userId: true },
+          },
+        },
+      }),
+      this.prisma.loan.findMany({
+        where: {
+          deletedAt: null,
+          managerId: { in: managerIds },
+        },
+        select: {
+          id: true,
+          managerId: true,
+          amount: true,
+          status: true,
+        },
+      }),
+    ]);
+
+    // Agrupar por manager
+    const managerClientsMap = new Map<string, { count: number; clients: Array<{ createdAt: Date }> }>();
+    const managerLoansMap = new Map<string, { count: number; totalAmount: number }>();
+
+    for (const id of managerIds) {
+      managerClientsMap.set(id, { count: 0, clients: [] });
+      managerLoansMap.set(id, { count: 0, totalAmount: 0 });
+    }
+
+    for (const client of clientsByManager) {
+      for (const cm of client.managers) {
+        const entry = managerClientsMap.get(cm.userId);
+        if (entry) {
+          entry.count++;
+          entry.clients.push({ createdAt: client.createdAt });
+        }
+      }
+    }
+
+    for (const loan of loansByManager) {
+      if (!loan.managerId) continue;
+      const entry = managerLoansMap.get(loan.managerId);
+      if (entry) {
+        entry.count++;
+        entry.totalAmount += Number(loan.amount);
+      }
+    }
+
+    return managers.map((manager) => {
+      const clientsEntry = managerClientsMap.get(manager.id)!;
+      const loansEntry = managerLoansMap.get(manager.id)!;
+      return {
+        id: manager.id,
+        fullName: manager.fullName,
+        email: manager.email,
+        totalClients: clientsEntry.count,
+        totalLoans: loansEntry.count,
+        totalAmount: loansEntry.totalAmount,
+        clients: clientsEntry.clients,
+      };
+    });
+  }
+
   async getManagerClientsChart(
     managerId: string,
     filters: ClientFiltersDto,

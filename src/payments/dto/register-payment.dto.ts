@@ -53,4 +53,16 @@ export class RegisterPaymentDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Nuevo monto total de la cuota (reemplaza totalAmount). ' +
+      'Se usa para ajustar el interés: si la cuota era 20k y se quiere cobrar 15k, enviar 15000. ' +
+      'Se guarda el valor original en originalTotalAmount para poder restaurar en reset.',
+    example: 15000,
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  adjustedTotalAmount?: number;
 }

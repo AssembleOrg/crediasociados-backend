@@ -231,11 +231,12 @@ export class LoansService {
   }
 
   async getAllActiveLoans(userId: string) {
-    // Get all active loans based on user role and hierarchy
+    // Only return non-completed loans by default
     const loans = await this.prisma.loan.findMany({
       where: {
         deletedAt: null,
         managerId: userId,
+        status: { not: 'COMPLETED' },
       },
       select: {
         id: true,
@@ -302,10 +303,72 @@ export class LoansService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        // ACTIVE/APPROVED first, COMPLETED/DEFAULTED last
+        { status: 'asc' },
+        // Within same status, newest first
+        { createdAt: 'desc' },
+      ],
+    });
+
+    // Re-sort with explicit priority since Prisma sorts status alphabetically
+    const statusPriority: Record<string, number> = {
+      ACTIVE: 0,
+      APPROVED: 1,
+      PENDING: 2,
+      DEFAULTED: 3,
+      COMPLETED: 4,
+    };
+    loans.sort((a: any, b: any) => {
+      const pa = statusPriority[a.status] ?? 2;
+      const pb = statusPriority[b.status] ?? 2;
+      if (pa !== pb) return pa - pb;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     return loans;
+  }
+
+  /**
+   * One-time fix: mark all ACTIVE loans with all PAID subloans as COMPLETED.
+   */
+  async fixCompletePaidLoans() {
+    const activeLoans = await this.prisma.loan.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        loanTrack: true,
+        subLoans: {
+          where: { deletedAt: null },
+          select: { status: true },
+        },
+      },
+    });
+
+    const toComplete = activeLoans.filter(
+      (loan) =>
+        loan.subLoans.length > 0 &&
+        loan.subLoans.every((sl) => sl.status === 'PAID'),
+    );
+
+    for (const loan of toComplete) {
+      await this.prisma.loan.update({
+        where: { id: loan.id },
+        data: {
+          status: 'COMPLETED',
+          completedDate: new Date(),
+        },
+      });
+    }
+
+    return {
+      message: `${toComplete.length} prestamos marcados como COMPLETED`,
+      total: toComplete.length,
+      loans: toComplete.map((l) => l.loanTrack),
+    };
   }
 
   async getAllLoans(userId: string, page: number = 1, limit: number = 10) {
@@ -464,6 +527,29 @@ export class LoansService {
       select: {
         id: true,
         description: true,
+      },
+    });
+  }
+
+  async updateFirstDueDate(loanId: string, userId: string, firstDueDate: string) {
+    const loan = await this.prisma.loan.findFirst({
+      where: {
+        id: loanId,
+        deletedAt: null,
+        managerId: userId,
+      },
+    });
+
+    if (!loan) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    return this.prisma.loan.update({
+      where: { id: loanId },
+      data: { firstDueDate: new Date(firstDueDate) },
+      select: {
+        id: true,
+        firstDueDate: true,
       },
     });
   }

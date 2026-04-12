@@ -28,6 +28,7 @@ import {
   TodayLoansDto,
   TodayLoanItemDto,
   UpdateLoanDescriptionDto,
+  UpdateLoanFirstDueDateDto,
 } from './dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -453,6 +454,21 @@ export class LoansController {
     return this.loansService.getTodayLoans(req.user.id, req.user.role);
   }
 
+  @Patch(':id/first-due-date')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Actualizar fecha del primer vencimiento de un préstamo' })
+  @ApiResponse({ status: 200, description: 'Fecha actualizada exitosamente' })
+  @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
+  async updateFirstDueDate(
+    @Param('id') id: string,
+    @Body() dto: UpdateLoanFirstDueDateDto,
+    @Request() req,
+  ) {
+    return this.loansService.updateFirstDueDate(id, req.user.id, dto.firstDueDate);
+  }
+
   @Patch(':id/description')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.MANAGER)
@@ -591,4 +607,5 @@ export class LoansController {
       groupBy,
     );
   }
+
 }

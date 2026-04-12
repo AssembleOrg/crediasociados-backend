@@ -28,7 +28,7 @@ export class PaymentsService {
     userRole: UserRole,
     registerPaymentDto: RegisterPaymentDto,
   ): Promise<any> {
-    const { subLoanId, amount, currency, paymentDate, description } =
+    const { subLoanId, amount, currency, paymentDate, description, adjustedTotalAmount } =
       registerPaymentDto;
 
     // Obtener el SubLoan con su Loan y Client
@@ -319,6 +319,52 @@ export class PaymentsService {
           previousPaidAmount > 0
             ? SubLoanStatus.PARTIAL
             : SubLoanStatus.PENDING;
+      }
+
+      // 0b. Aplicar ajuste de monto de cuota si se proporcionó
+      let adjustmentApplied = 0;
+      if (adjustedTotalAmount !== undefined && adjustedTotalAmount !== null) {
+        const currentTotal = Number(subLoan.totalAmount);
+        const currentPaid = Number(subLoan.paidAmount);
+
+        if (adjustedTotalAmount < currentPaid) {
+          throw new BadRequestException(
+            `El monto ajustado ($${adjustedTotalAmount}) no puede ser menor al ya pagado ($${currentPaid})`,
+          );
+        }
+        if (adjustedTotalAmount <= 0) {
+          throw new BadRequestException('El monto ajustado debe ser mayor a 0');
+        }
+
+        const difference = adjustedTotalAmount - currentTotal;
+
+        // Guardar el valor original si es la primera vez que se ajusta
+        const originalTotal = subLoan.originalTotalAmount
+          ? Number(subLoan.originalTotalAmount)
+          : currentTotal;
+
+        await tx.subLoan.update({
+          where: { id: subLoanId },
+          data: {
+            totalAmount: new Prisma.Decimal(adjustedTotalAmount),
+            originalTotalAmount: new Prisma.Decimal(originalTotal),
+          },
+        });
+        subLoan.totalAmount = new Prisma.Decimal(adjustedTotalAmount);
+
+        // Actualizar amount del loan
+        if (difference !== 0) {
+          await tx.loan.update({
+            where: { id: subLoan.loanId },
+            data: {
+              amount: {
+                increment: new Prisma.Decimal(difference),
+              },
+            },
+          });
+        }
+
+        adjustmentApplied = difference;
       }
 
       let remainingAmount = amount;
@@ -623,11 +669,15 @@ export class PaymentsService {
         payment,
         subLoan: updatedSubLoan,
         distributedPayments,
+        adjustmentApplied,
       };
     }, {
       maxWait: 30000, // 30 segundos máximo de espera para iniciar la transacción
       timeout: 30000, // 30 segundos máximo de ejecución de la transacción
     });
+
+    // Check if all subloans are PAID → mark loan as COMPLETED
+    await this.checkAndCompleteLoan(subLoan.loanId);
 
     // Obtener todos los subLoans del préstamo actualizados después de la transacción
     const allSubLoans = await this.prisma.subLoan.findMany({
@@ -1343,10 +1393,29 @@ export class PaymentsService {
       }
 
       // 5. Resetear el SubLoan y agregar entrada al historial
+      // Si la cuota fue ajustada, restaurar el monto original y corregir el loan.amount
+      const wasAdjusted = subLoan.originalTotalAmount !== null;
+      if (wasAdjusted) {
+        const originalTotal = Number(subLoan.originalTotalAmount);
+        const currentTotal = Number(subLoan.totalAmount);
+        const loanDiff = originalTotal - currentTotal;
+        if (loanDiff !== 0) {
+          await tx.loan.update({
+            where: { id: subLoan.loanId },
+            data: { amount: { increment: new Prisma.Decimal(loanDiff) } },
+          });
+        }
+      }
+
       const updatedSubLoan = await tx.subLoan.update({
         where: { id: subLoanId },
         data: {
           paidAmount: new Prisma.Decimal(0),
+          // Restaurar totalAmount original si fue ajustado
+          ...(wasAdjusted && {
+            totalAmount: subLoan.originalTotalAmount!,
+            originalTotalAmount: null,
+          }),
           status: SubLoanStatus.PENDING,
           paidDate: null,
           paymentHistory: this.addResetToPaymentHistory(
@@ -1366,6 +1435,9 @@ export class PaymentsService {
       maxWait: 30000,
       timeout: 30000,
     });
+
+    // If loan was COMPLETED and now has unpaid subloans, revert to ACTIVE
+    await this.revertCompletedLoanIfNeeded(subLoan.loanId);
 
     return {
       message: 'Pagos reseteados exitosamente',
@@ -1941,5 +2013,48 @@ export class PaymentsService {
       },
       distributedPayments: result.distributedPayments,
     };
+  }
+
+  /**
+   * If all subloans of a loan are PAID, mark the loan as COMPLETED.
+   */
+  private async checkAndCompleteLoan(loanId: string): Promise<void> {
+    const subLoans = await this.prisma.subLoan.findMany({
+      where: { loanId, deletedAt: null },
+      select: { status: true },
+    });
+
+    if (subLoans.length === 0) return;
+
+    const allPaid = subLoans.every((sl) => sl.status === 'PAID');
+    if (!allPaid) return;
+
+    await this.prisma.loan.update({
+      where: { id: loanId },
+      data: {
+        status: 'COMPLETED',
+        completedDate: new Date(),
+      },
+    });
+  }
+
+  /**
+   * If a loan is COMPLETED but now has non-PAID subloans (after reset), revert to ACTIVE.
+   */
+  private async revertCompletedLoanIfNeeded(loanId: string): Promise<void> {
+    const loan = await this.prisma.loan.findUnique({
+      where: { id: loanId },
+      select: { status: true },
+    });
+
+    if (!loan || loan.status !== 'COMPLETED') return;
+
+    await this.prisma.loan.update({
+      where: { id: loanId },
+      data: {
+        status: 'ACTIVE',
+        completedDate: null,
+      },
+    });
   }
 }

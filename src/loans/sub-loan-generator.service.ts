@@ -115,6 +115,9 @@ export class SubLoanGeneratorService {
 
     if (firstDueDate) {
       start = DateTime.fromJSDate(firstDueDate).setZone(tz).startOf('day');
+    } else if (paymentFrequency === 'MONTHLY') {
+      // Para mensual sin firstDueDate: empezar en 1 mes desde hoy
+      start = DateUtil.now().plus({ months: 1 }).startOf('day');
     } else {
       // Día siguiente a hoy en Argentina
       start = DateUtil.now().plus({ days: 1 }).startOf('day');
