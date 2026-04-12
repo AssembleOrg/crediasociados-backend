@@ -5,6 +5,9 @@
 *.md
 /scripts/**
 
+# Claude
+.claude/
+
 # Logs
 logs
 *.log
