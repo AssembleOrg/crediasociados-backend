@@ -651,7 +651,7 @@ export class SubLoansService {
     },
   ) {
     const page = filters.page || 1;
-    const limit = Math.max(filters.limit || 20, 20);
+    const limit = Math.max(filters.limit || 25, 25);
 
     // Date boundaries for urgency calculation (Argentina timezone)
     const todayStart = DateUtil.now().startOf('day').toJSDate();

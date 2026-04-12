@@ -120,26 +120,36 @@ export class AuditInterceptor implements NestInterceptor {
     const action = actionMap[method] || AuditAction.READ;
     const entityId = params?.id;
 
+    // Sanitize sensitive fields before persisting
+    const sanitize = (obj: any): any => {
+      if (!obj || typeof obj !== 'object') return obj;
+      const SENSITIVE_KEYS = ['password', 'newPassword', 'refreshToken', 'token', 'secret', 'accessToken'];
+      const sanitized = Array.isArray(obj) ? [...obj] : { ...obj };
+      for (const key of Object.keys(sanitized)) {
+        if (SENSITIVE_KEYS.includes(key)) {
+          sanitized[key] = '[REDACTED]';
+        } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
+          sanitized[key] = sanitize(sanitized[key]);
+        }
+      }
+      return sanitized;
+    };
+
     // Preparar cambios según el tipo de operación
     let changes: any = undefined;
-    
+
     if (method === 'POST') {
-      // CREATE: Solo el estado después
       changes = {
-        after: body,
+        after: sanitize(body),
       };
     } else if (method === 'PUT' || method === 'PATCH') {
-      // UPDATE: El estado después (el before debería capturarse en el servicio si es necesario)
       changes = {
-        after: body,
+        after: sanitize(body),
       };
     } else if (method === 'DELETE') {
-      // DELETE: Capturar el estado BEFORE desde la respuesta del servicio
-      // La respuesta puede contener la data eliminada
       const deletedData = responseData?.data || responseData;
-      
       changes = {
-        before: deletedData,
+        before: sanitize(deletedData),
       };
     }
 

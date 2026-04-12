@@ -193,31 +193,32 @@ export class LoansService {
         },
         deletedAt: null,
       },
-      include: {
+      select: {
+        id: true,
+        loanTrack: true,
+        amount: true,
+        originalAmount: true,
+        status: true,
+        currency: true,
+        paymentFrequency: true,
+        totalPayments: true,
+        createdAt: true,
+        // Only expose client name - no phone, email, address, cuit
         client: {
           select: {
-            id: true,
             fullName: true,
             dni: true,
-            cuit: true,
-            phone: true,
-            email: true,
-            address: true,
           },
         },
         subLoans: {
           where: { deletedAt: null },
           orderBy: { paymentNumber: 'asc' },
           select: {
-            id: true,
             paymentNumber: true,
-            amount: true,
             totalAmount: true,
             status: true,
             dueDate: true,
-            paidDate: true,
             paidAmount: true,
-            daysOverdue: true,
           },
         },
       },
