@@ -103,15 +103,8 @@ export class CollectionRoutesService {
             loan: {
               deletedAt: null,
               status: { in: ['ACTIVE', 'APPROVED'] },
-              client: {
-                deletedAt: null,
-                managers: {
-                  some: {
-                    userId: manager.id,
-                    deletedAt: null,
-                  },
-                },
-              },
+              managerId: manager.id,
+              client: { deletedAt: null },
             },
           },
           include: {
@@ -280,15 +273,8 @@ export class CollectionRoutesService {
               loan: {
                 deletedAt: null,
                 status: { in: ['ACTIVE', 'APPROVED'] },
-                client: {
-                  deletedAt: null,
-                  managers: {
-                    some: {
-                      userId: manager.id,
-                      deletedAt: null,
-                    },
-                  },
-                },
+                managerId: manager.id,
+                client: { deletedAt: null },
               },
             },
             include: {
@@ -389,6 +375,87 @@ export class CollectionRoutesService {
       },
       dailySummaries,
       allCreatedRoutes,
+    };
+  }
+
+  /**
+   * Limpia items de rutas cuyo subLoan pertenece a un préstamo de OTRO manager.
+   * Filtra por defecto rutas ACTIVE del día actual; si `allActive=true` revisa todas las ACTIVE.
+   * Items con amountCollected > 0 no se eliminan: se reportan para revisión manual.
+   */
+  async cleanupMismatchedRouteItems(options?: {
+    allActive?: boolean;
+  }): Promise<any> {
+    const allActive = options?.allActive ?? false;
+    const whereRoute: Prisma.DailyCollectionRouteWhereInput = {
+      status: 'ACTIVE',
+      ...(allActive
+        ? {}
+        : { routeDate: DateUtil.now().startOf('day').toJSDate() }),
+    };
+
+    const routes = await this.prisma.dailyCollectionRoute.findMany({
+      where: whereRoute,
+      include: {
+        items: {
+          include: {
+            subLoan: {
+              select: { id: true, loan: { select: { managerId: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    const deletedItems: any[] = [];
+    const flaggedItems: any[] = [];
+
+    for (const route of routes) {
+      for (const item of route.items) {
+        const loanManagerId = item.subLoan?.loan?.managerId ?? null;
+        const mismatched =
+          loanManagerId !== null && loanManagerId !== route.managerId;
+        if (!mismatched) continue;
+
+        const collected = Number(item.amountCollected ?? 0);
+        if (collected > 0) {
+          flaggedItems.push({
+            routeId: route.id,
+            routeManagerId: route.managerId,
+            itemId: item.id,
+            subLoanId: item.subLoanId,
+            loanManagerId,
+            amountCollected: collected,
+            clientName: item.clientName,
+          });
+          continue;
+        }
+
+        await this.prisma.collectionRouteItem.delete({
+          where: { id: item.id },
+        });
+        deletedItems.push({
+          routeId: route.id,
+          routeManagerId: route.managerId,
+          itemId: item.id,
+          subLoanId: item.subLoanId,
+          loanManagerId,
+          clientName: item.clientName,
+        });
+      }
+    }
+
+    this.logger.log(
+      `Cleanup rutas: eliminados ${deletedItems.length}, flagged ${flaggedItems.length}`,
+    );
+
+    return {
+      scope: allActive ? 'all_active' : 'today',
+      routesScanned: routes.length,
+      deletedCount: deletedItems.length,
+      flaggedCount: flaggedItems.length,
+      deletedItems,
+      flaggedItems,
     };
   }
 

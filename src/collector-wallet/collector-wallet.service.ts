@@ -1354,14 +1354,7 @@ export class CollectorWalletService {
         },
         subLoan: {
           loan: {
-            client: {
-              managers: {
-                some: {
-                  userId: targetUserId,
-                  deletedAt: null,
-                },
-              },
-            },
+            managerId: targetUserId,
           },
         },
       },
@@ -1387,14 +1380,7 @@ export class CollectorWalletService {
           lte: periodEnd,
         },
         loan: {
-          client: {
-            managers: {
-              some: {
-                userId: targetUserId,
-                deletedAt: null,
-              },
-            },
-          },
+          managerId: targetUserId,
         },
         deletedAt: null,
       },
@@ -1518,14 +1504,7 @@ export class CollectorWalletService {
           gte: periodStart,
           lte: periodEnd,
         },
-        client: {
-          managers: {
-            some: {
-              userId: targetUserId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: targetUserId,
         deletedAt: null,
       },
       select: {
@@ -1546,14 +1525,7 @@ export class CollectorWalletService {
     // ya que pueden ser de préstamos creados antes del período pero con transacciones en el período
     const allExistingLoans = await this.prisma.loan.findMany({
       where: {
-        client: {
-          managers: {
-            some: {
-              userId: targetUserId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: targetUserId,
         deletedAt: null,
       },
       select: {

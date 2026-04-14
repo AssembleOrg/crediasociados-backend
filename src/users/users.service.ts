@@ -903,14 +903,7 @@ export class UsersService {
     // Construir filtros
     const whereClause: any = {
       deletedAt: null,
-      client: {
-        managers: {
-          some: {
-            userId: managerId,
-            deletedAt: null,
-          },
-        },
-      },
+      managerId: managerId,
     };
 
     if (filters.clientId) {
@@ -1030,14 +1023,7 @@ export class UsersService {
     // Construir filtros (mismo que arriba pero sin paginación)
     const whereClause: any = {
       deletedAt: null,
-      client: {
-        managers: {
-          some: {
-            userId: managerId,
-            deletedAt: null,
-          },
-        },
-      },
+      managerId: managerId,
     };
 
     if (filters.clientId) {
@@ -1271,14 +1257,7 @@ export class UsersService {
     // Obtener todos los loans del manager
     const managerLoans = await this.prisma.loan.findMany({
       where: {
-        client: {
-          managers: {
-            some: {
-              userId: managerId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: managerId,
         deletedAt: null,
       },
       select: { id: true },

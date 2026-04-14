@@ -386,6 +386,24 @@ export class CollectionRoutesController {
     return this.collectionRoutesService.createDailyRoutesForNovember();
   }
 
+  @Post('cleanup-mismatched-items')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Limpia items de rutas cuyo préstamo pertenece a otro manager',
+    description:
+      'Para cada ruta ACTIVE elimina los items con subLoan.loan.managerId distinto al manager de la ruta. ' +
+      'Items con amountCollected > 0 se reportan pero NO se eliminan (revisión manual). ' +
+      'Por defecto scope=today; pasar allActive=true para todas las ACTIVE.',
+  })
+  @ApiQuery({ name: 'allActive', required: false, type: Boolean })
+  async cleanupMismatchedRouteItems(
+    @Query('allActive') allActive?: string,
+  ): Promise<any> {
+    return this.collectionRoutesService.cleanupMismatchedRouteItems({
+      allActive: allActive === 'true',
+    });
+  }
+
   @Post(':routeId/expenses')
   @Roles(UserRole.MANAGER, UserRole.SUBADMIN)
   @ApiOperation({
