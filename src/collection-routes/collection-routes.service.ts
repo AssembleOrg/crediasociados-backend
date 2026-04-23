@@ -1653,12 +1653,13 @@ export class CollectionRoutesService {
     }
 
     const isNewDateToday = targetDate.getTime() === today.getTime();
+    const normalizedDueDate = new Date(newDueDate.slice(0, 10) + 'T12:00:00');
 
     if (isNewDateToday) {
       // Just update the dueDate, keep the item in today's route
       await this.prisma.subLoan.update({
         where: { id: item.subLoanId },
-        data: { dueDate: new Date(newDueDate + 'T12:00:00') },
+        data: { dueDate: normalizedDueDate },
       });
 
       return {
@@ -1673,7 +1674,7 @@ export class CollectionRoutesService {
     await this.prisma.$transaction([
       this.prisma.subLoan.update({
         where: { id: item.subLoanId },
-        data: { dueDate: new Date(newDueDate + 'T12:00:00') },
+        data: { dueDate: normalizedDueDate },
       }),
       this.prisma.collectionRouteItem.delete({
         where: { id: itemId },

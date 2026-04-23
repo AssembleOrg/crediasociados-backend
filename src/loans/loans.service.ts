@@ -6,13 +6,16 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { RenewLoanDto } from './dto/renew-loan.dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
-import { Prisma, UserRole } from '@prisma/client';
+import { LoanPdfService } from './loan-pdf.service';
+import { Prisma, SubLoanStatus, UserRole } from '@prisma/client';
 import { LoanStatus, WalletTransactionType } from 'src/common/enums';
 import { CollectorWalletTransactionType } from '../common/enums';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class LoansService {
@@ -20,6 +23,8 @@ export class LoansService {
     private prisma: PrismaService,
     private subLoanGenerator: SubLoanGeneratorService,
     private collectorWalletService: CollectorWalletService,
+    private walletService: WalletService,
+    private loanPdfService: LoanPdfService,
   ) {}
 
   async createLoan(createLoanDto: CreateLoanDto, userId: string) {
@@ -1326,6 +1331,276 @@ export class LoansService {
       total,
       totalAmount,
       loans: transformedLoans,
+    };
+  }
+
+  /**
+   * Renovar un préstamo: cancela todo el saldo a finalizar del préstamo actual
+   * (ingresa a la wallet del manager), lo marca COMPLETED, y crea un nuevo
+   * préstamo (egresa de la wallet) con defaults del viejo editables.
+   * Todo en una sola transacción atómica.
+   */
+  async renewLoan(loanId: string, userId: string, dto: RenewLoanDto) {
+    // 1. Buscar y validar el préstamo a renovar
+    const existingLoan = await this.prisma.loan.findFirst({
+      where: { id: loanId, deletedAt: null, managerId: userId },
+      include: {
+        client: {
+          select: { id: true, fullName: true, verified: true },
+        },
+        subLoans: {
+          where: { deletedAt: null },
+          orderBy: { paymentNumber: 'asc' },
+        },
+      },
+    });
+
+    if (!existingLoan) {
+      throw new NotFoundException('Préstamo no encontrado');
+    }
+
+    if (existingLoan.status === LoanStatus.COMPLETED) {
+      throw new BadRequestException('El préstamo ya está completado');
+    }
+
+    if (!existingLoan.client.verified) {
+      throw new BadRequestException(
+        `No se puede renovar: el cliente "${existingLoan.client.fullName}" no está verificado`,
+      );
+    }
+
+    // 2. Calcular saldo pendiente (suma de totalAmount - paidAmount de subloans no PAID)
+    const pendingSubLoans = existingLoan.subLoans.filter(
+      (sl) => sl.status !== SubLoanStatus.PAID,
+    );
+
+    const saldoPendiente = pendingSubLoans.reduce((sum, sl) => {
+      const remaining = Math.max(
+        0,
+        Number(sl.totalAmount) - Number(sl.paidAmount),
+      );
+      return sum + remaining;
+    }, 0);
+
+    if (saldoPendiente <= 0) {
+      throw new BadRequestException(
+        'El préstamo no tiene saldo pendiente para renovar',
+      );
+    }
+
+    if (pendingSubLoans.length === 0) {
+      throw new BadRequestException(
+        'No hay cuotas pendientes para cancelar en este préstamo',
+      );
+    }
+
+    // 3. Validar que la moneda de la wallet coincida
+    const collectorWallet =
+      await this.collectorWalletService.getOrCreateWallet(userId);
+    if (collectorWallet.currency !== existingLoan.currency) {
+      throw new BadRequestException(
+        `La wallet de cobros usa ${collectorWallet.currency}, no se puede operar con ${existingLoan.currency}`,
+      );
+    }
+
+    // 4. Generar código de tracking para el nuevo préstamo (fuera de la tx principal:
+    //    TrackingCodeUtil usa su propia $transaction y no podemos anidar)
+    const trackingData = await TrackingCodeUtil.generateSequentialTrackingCode(
+      this.prisma,
+      'CREDITO',
+    );
+
+    // 5. Montos del nuevo préstamo
+    const newOriginalAmount = Number(dto.amount);
+    const newTotalAmount =
+      newOriginalAmount * (1 + Number(dto.baseInterestRate));
+
+    // 6. Transacción atómica: cancelar viejo + crear nuevo
+    const newLoanId = await this.prisma.$transaction(
+      async (tx) => {
+        const now = new Date();
+
+        // 6a. Marcar todas las subloans pendientes como PAID
+        for (const sl of pendingSubLoans) {
+          await tx.subLoan.update({
+            where: { id: sl.id },
+            data: {
+              status: SubLoanStatus.PAID,
+              paidDate: now,
+              paidAmount: new Prisma.Decimal(Number(sl.totalAmount)),
+              daysOverdue: 0,
+            },
+          });
+        }
+
+        // 6b. Registrar un único Payment de cancelación anticipada asociado a
+        //     la última cuota pendiente (convención para no spammear el historial)
+        const lastPending = pendingSubLoans[pendingSubLoans.length - 1];
+        await tx.payment.create({
+          data: {
+            subLoanId: lastPending.id,
+            amount: new Prisma.Decimal(saldoPendiente),
+            currency: existingLoan.currency,
+            paymentDate: now,
+            description: `Cancelación anticipada por renovación - ${existingLoan.loanTrack}`,
+          },
+        });
+
+        // 6c. Marcar el préstamo viejo como COMPLETED
+        await tx.loan.update({
+          where: { id: existingLoan.id },
+          data: {
+            status: LoanStatus.COMPLETED,
+            completedDate: now,
+          },
+        });
+
+        // 6d. Acreditar a la cartera principal del manager (LOAN_PAYMENT)
+        await this.walletService.credit({
+          userId,
+          amount: saldoPendiente,
+          type: WalletTransactionType.LOAN_PAYMENT,
+          description: `Cancelación por renovación ${existingLoan.loanTrack}`,
+          transaction: tx,
+        });
+
+        // 6d-bis. Acreditar saldoPendiente a la wallet del cobrador (ingreso)
+        await this.collectorWalletService.recordCollection({
+          userId,
+          amount: saldoPendiente,
+          description: `Cancelación por renovación ${existingLoan.loanTrack}`,
+          subLoanId: lastPending.id,
+          transaction: tx,
+        });
+
+        // 6d-bis. Recalcular totalCollectedPayments de la ruta del día del manager
+        //          para que el "Cobrado" de hoy incluya este pago grande.
+        const dayStart = DateUtil.startOfDay(DateUtil.fromJSDate(now)).toJSDate();
+        const dayEnd = DateUtil.endOfDay(DateUtil.fromJSDate(now)).toJSDate();
+        const paymentsSum = await tx.payment.aggregate({
+          where: {
+            createdAt: { gte: dayStart, lte: dayEnd },
+            subLoan: { loan: { managerId: userId } },
+          },
+          _sum: { amount: true },
+        });
+        await tx.dailyCollectionRoute.updateMany({
+          where: { managerId: userId, routeDate: dayStart },
+          data: {
+            totalCollectedPayments:
+              paymentsSum._sum.amount ?? new Prisma.Decimal(0),
+          },
+        });
+
+        // 6e. Crear el nuevo préstamo
+        const firstDueDate = DateUtil.parseToDate(dto.firstDueDate);
+        const newLoan = await tx.loan.create({
+          data: {
+            clientId: existingLoan.clientId,
+            managerId: userId,
+            amount: newTotalAmount,
+            originalAmount: newOriginalAmount,
+            currency: existingLoan.currency,
+            paymentFrequency: dto.paymentFrequency,
+            paymentDay: dto.paymentDay,
+            status: LoanStatus.ACTIVE,
+            totalPayments: dto.totalPayments,
+            firstDueDate,
+            loanTrack: trackingData.trackingCode,
+            prefix: trackingData.prefix,
+            year: trackingData.year,
+            sequence: trackingData.sequence,
+            description:
+              dto.description ?? `Renovación de ${existingLoan.loanTrack}`,
+            notes: dto.notes,
+            baseInterestRate: dto.baseInterestRate,
+            penaltyInterestRate: dto.penaltyInterestRate,
+          },
+        });
+
+        // 6f. Generar SubLoans del nuevo préstamo
+        const generatorPayload = {
+          clientId: existingLoan.clientId,
+          amount: newOriginalAmount,
+          baseInterestRate: dto.baseInterestRate,
+          penaltyInterestRate: dto.penaltyInterestRate,
+          currency: existingLoan.currency,
+          paymentFrequency: dto.paymentFrequency,
+          paymentDay: dto.paymentDay,
+          totalPayments: dto.totalPayments,
+          firstDueDate: dto.firstDueDate,
+          description: dto.description,
+          notes: dto.notes,
+        } as CreateLoanDto;
+
+        await this.subLoanGenerator.generateSubLoans(
+          newLoan.id,
+          generatorPayload,
+          firstDueDate,
+          tx,
+        );
+
+        // 6g. Débito del capital del nuevo préstamo (egreso)
+        await this.collectorWalletService.recordLoanDisbursement({
+          userId,
+          amount: newOriginalAmount,
+          description: `Préstamo ${trackingData.trackingCode} - Renovación de ${existingLoan.loanTrack}`,
+          loanId: newLoan.id,
+          transaction: tx,
+        });
+
+        return newLoan.id;
+      },
+      {
+        maxWait: 30000,
+        timeout: 30000,
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    // 7. Releer el nuevo préstamo con subloans y cliente para la respuesta
+    const newLoan = await this.prisma.loan.findUnique({
+      where: { id: newLoanId },
+      include: {
+        client: {
+          select: { id: true, fullName: true, dni: true, cuit: true },
+        },
+        subLoans: {
+          where: { deletedAt: null },
+          orderBy: { paymentNumber: 'asc' },
+        },
+      },
+    });
+
+    // 8. Generar PDF del nuevo préstamo (fuera de la tx, es read-only)
+    const pdf = await this.loanPdfService.generateLoanPdf(newLoanId);
+
+    // 9. Normalizar campos Decimal a number para el front
+    const transformedNewLoan = newLoan
+      ? {
+          ...newLoan,
+          amount: Number(newLoan.amount),
+          originalAmount: Number(newLoan.originalAmount),
+          baseInterestRate: Number(newLoan.baseInterestRate),
+          penaltyInterestRate: Number(newLoan.penaltyInterestRate),
+          subLoans: newLoan.subLoans.map((sl) => ({
+            ...sl,
+            amount: Number(sl.amount),
+            totalAmount: Number(sl.totalAmount),
+            paidAmount: Number(sl.paidAmount),
+          })),
+        }
+      : null;
+
+    return {
+      previousLoan: {
+        id: existingLoan.id,
+        loanTrack: existingLoan.loanTrack,
+        settledAmount: saldoPendiente,
+      },
+      newLoan: transformedNewLoan,
+      pdfBase64: pdf.pdfBase64,
+      pdfFilename: pdf.filename,
     };
   }
 }

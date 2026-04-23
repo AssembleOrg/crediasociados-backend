@@ -30,6 +30,7 @@ import {
   TodayLoanItemDto,
   UpdateLoanDescriptionDto,
   UpdateLoanFirstDueDateDto,
+  RenewLoanDto,
 } from './dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -485,6 +486,29 @@ export class LoansController {
     @Request() req,
   ) {
     return this.loansService.updateDescription(id, req.user.id, dto.description || '');
+  }
+
+  @Post(':id/renew')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Renovar un préstamo: cancela el saldo pendiente y crea uno nuevo',
+    description:
+      'Cancela todas las cuotas pendientes del préstamo actual (ingreso total a la wallet), lo marca COMPLETED, y crea inmediatamente un nuevo préstamo con capital, tasa, frecuencia y cuotas configurables (defaults del viejo). Todo en una transacción atómica. Devuelve el PDF del nuevo préstamo en base64.',
+  })
+  @ApiResponse({ status: 201, description: 'Préstamo renovado exitosamente' })
+  @ApiResponse({
+    status: 400,
+    description: 'Préstamo sin saldo pendiente o ya completado',
+  })
+  @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
+  async renewLoan(
+    @Param('id') id: string,
+    @Body() dto: RenewLoanDto,
+    @Request() req,
+  ) {
+    return this.loansService.renewLoan(id, req.user.id, dto);
   }
 
   @Get('dashboard-stats')
