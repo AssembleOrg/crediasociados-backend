@@ -529,21 +529,23 @@ export class CollectionRoutesController {
     summary: 'Reprogramar cuota y eliminarla de la ruta del dia',
     description:
       'Cambia la fecha de vencimiento del subloan asociado al item y lo elimina de la ruta activa. ' +
+      'Opcionalmente acepta un nuevo monto (recargo o descuento) que actualiza tambien el total del prestamo. ' +
       'Util cuando el cobrador posterga el cobro 24/48hs.',
   })
   @ApiParam({ name: 'itemId', description: 'ID del item de la ruta' })
   @ApiResponse({ status: 200, description: 'Cuota reprogramada y eliminada de la ruta' })
-  @ApiResponse({ status: 400, description: 'La fecha debe ser posterior a hoy' })
+  @ApiResponse({ status: 400, description: 'La fecha debe ser posterior a hoy o monto invalido' })
   @ApiResponse({ status: 404, description: 'Item no encontrado' })
   async rescheduleRouteItem(
     @Request() req,
     @Param('itemId') itemId: string,
-    @Body() body: { dueDate: string },
+    @Body() body: { dueDate: string; amount?: number },
   ) {
     return this.collectionRoutesService.rescheduleRouteItem(
       itemId,
       req.user.id,
       body.dueDate,
+      body.amount,
     );
   }
 }

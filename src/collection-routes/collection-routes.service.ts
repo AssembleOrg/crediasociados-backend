@@ -1613,8 +1613,15 @@ export class CollectionRoutesService {
 
   /**
    * Reprogramar una cuota: cambiar su dueDate y eliminar el item de la ruta del dia.
+   * Si se provee newAmount distinto al totalAmount actual, se aplica como recargo/descuento:
+   * actualiza SubLoan.totalAmount y propaga el delta a Loan.amount en la misma transaccion.
    */
-  async rescheduleRouteItem(itemId: string, userId: string, newDueDate: string) {
+  async rescheduleRouteItem(
+    itemId: string,
+    userId: string,
+    newDueDate: string,
+    newAmount?: number,
+  ) {
     // Validar que la fecha sea futura
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1655,37 +1662,67 @@ export class CollectionRoutesService {
     const isNewDateToday = targetDate.getTime() === today.getTime();
     const normalizedDueDate = new Date(newDueDate.slice(0, 10) + 'T12:00:00');
 
-    if (isNewDateToday) {
-      // Just update the dueDate, keep the item in today's route
-      await this.prisma.subLoan.update({
-        where: { id: item.subLoanId },
-        data: { dueDate: normalizedDueDate },
-      });
+    // Resolver cambio de monto (si aplica)
+    const currentTotal = new Decimal(item.subLoan.totalAmount);
+    const paidAmount = new Decimal(item.subLoan.paidAmount);
+    let amountChanged = false;
+    let newTotalDecimal = currentTotal;
+    let amountDelta = new Decimal(0);
 
-      return {
-        message: 'Fecha actualizada. La cuota permanece en la ruta de hoy.',
-        subLoanId: item.subLoanId,
-        newDueDate,
-        removedItemId: null,
-      };
+    if (newAmount !== undefined && newAmount !== null) {
+      if (!Number.isFinite(newAmount) || newAmount < 0) {
+        throw new BadRequestException('El monto debe ser un numero valido mayor o igual a cero');
+      }
+      newTotalDecimal = new Decimal(newAmount);
+      if (!newTotalDecimal.equals(currentTotal)) {
+        if (newTotalDecimal.lessThan(paidAmount)) {
+          throw new BadRequestException(
+            `El nuevo monto no puede ser menor al ya pagado (${paidAmount.toString()})`,
+          );
+        }
+        amountChanged = true;
+        amountDelta = newTotalDecimal.minus(currentTotal);
+      }
     }
 
-    // Future date: update subloan + remove from today's route
-    await this.prisma.$transaction([
+    const subLoanData: Prisma.SubLoanUpdateInput = { dueDate: normalizedDueDate };
+    if (amountChanged) {
+      subLoanData.totalAmount = newTotalDecimal;
+    }
+
+    const operations: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.subLoan.update({
         where: { id: item.subLoanId },
-        data: { dueDate: normalizedDueDate },
+        data: subLoanData,
       }),
-      this.prisma.collectionRouteItem.delete({
-        where: { id: itemId },
-      }),
-    ]);
+    ];
+
+    if (amountChanged) {
+      operations.push(
+        this.prisma.loan.update({
+          where: { id: item.subLoan.loanId },
+          data: { amount: { increment: amountDelta } },
+        }),
+      );
+    }
+
+    if (!isNewDateToday) {
+      operations.push(
+        this.prisma.collectionRouteItem.delete({ where: { id: itemId } }),
+      );
+    }
+
+    await this.prisma.$transaction(operations);
 
     return {
-      message: 'Cuota reprogramada y eliminada de la ruta',
+      message: isNewDateToday
+        ? 'Fecha actualizada. La cuota permanece en la ruta de hoy.'
+        : 'Cuota reprogramada y eliminada de la ruta',
       subLoanId: item.subLoanId,
       newDueDate,
-      removedItemId: itemId,
+      removedItemId: isNewDateToday ? null : itemId,
+      newAmount: amountChanged ? newTotalDecimal.toNumber() : null,
+      amountDelta: amountChanged ? amountDelta.toNumber() : 0,
     };
   }
 }
