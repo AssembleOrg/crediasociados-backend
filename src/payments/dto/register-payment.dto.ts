@@ -6,6 +6,7 @@ import {
   IsString,
   IsOptional,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Currency } from '../../common/enums';
@@ -65,4 +66,16 @@ export class RegisterPaymentDto {
   @IsNumber()
   @IsPositive()
   adjustedTotalAmount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Si es true (default), el excedente del pago se distribuye automáticamente: ' +
+      'primero a cuotas anteriores no pagadas (OVERDUE/PENDING/PARTIAL) y luego a cuotas siguientes. ' +
+      'Si es false, no se distribuye: el backend rechaza el pago si el monto excede el saldo pendiente de la cuota.',
+    example: true,
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  distributeOverflow?: boolean;
 }

@@ -28,8 +28,16 @@ export class PaymentsService {
     userRole: UserRole,
     registerPaymentDto: RegisterPaymentDto,
   ): Promise<any> {
-    const { subLoanId, amount, currency, paymentDate, description, adjustedTotalAmount } =
-      registerPaymentDto;
+    const {
+      subLoanId,
+      amount,
+      currency,
+      paymentDate,
+      description,
+      adjustedTotalAmount,
+      distributeOverflow,
+    } = registerPaymentDto;
+    const shouldDistributeOverflow = distributeOverflow !== false;
 
     // Obtener el SubLoan con su Loan y Client
     const subLoan = await this.prisma.subLoan.findUnique({
@@ -187,12 +195,14 @@ export class PaymentsService {
         const excessAmount = lastPaymentAmount - amountAppliedToThisSubLoan;
         
         if (excessAmount > 0) {
-          // Buscar subpréstamos parciales anteriores que puedan haber recibido el excedente
+          // Buscar subpréstamos anteriores que puedan haber recibido el excedente.
+          // Incluye PAID porque el excedente del pago original pudo haber CERRADO
+          // una cuota anterior; al revertir, esa cuota PAID vuelve a PARTIAL/PENDING.
           const partialSubLoans = await tx.subLoan.findMany({
             where: {
               loanId: subLoan.loanId,
               paymentNumber: { lt: subLoan.paymentNumber },
-              status: SubLoanStatus.PARTIAL,
+              status: { in: [SubLoanStatus.PARTIAL, SubLoanStatus.PAID] },
               deletedAt: null,
             },
             orderBy: { paymentNumber: 'desc' }, // Empezar por el más reciente
@@ -374,6 +384,15 @@ export class PaymentsService {
       const currentRemainingAmount =
         Number(subLoan.totalAmount) - Number(subLoan.paidAmount);
 
+      // Si el usuario optó por NO distribuir excedente, rechazar antes de tocar nada
+      // cuando el monto supera el saldo pendiente. El frontend debe avisar antes.
+      if (!shouldDistributeOverflow && remainingAmount > currentRemainingAmount) {
+        throw new BadRequestException(
+          `El monto supera el saldo pendiente de la cuota ($${currentRemainingAmount}). ` +
+            `Active "Completar otras cuotas con excedente" o ajuste el monto de la cuota.`,
+        );
+      }
+
       let updatedSubLoan: any;
 
       if (remainingAmount >= currentRemainingAmount) {
@@ -436,7 +455,7 @@ export class PaymentsService {
 
       // 2. Si hay excedente, primero cubrir SubLoans ANTERIORES no pagados (OVERDUE/PENDING/PARTIAL)
       // Regla: primero la cuota seleccionada, luego anteriores, luego futuras.
-      if (remainingAmount > 0) {
+      if (shouldDistributeOverflow && remainingAmount > 0) {
         const previousSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
@@ -517,7 +536,7 @@ export class PaymentsService {
       // 3. Si hay excedente, buscar SubLoans SIGUIENTES no pagados (PENDING, PARTIAL o OVERDUE)
       // El excedente restante se usa para adelantar pagos de cuotas posteriores
       // Incluimos OVERDUE para que se paguen las cuotas vencidas de forma contigua
-      if (remainingAmount > 0) {
+      if (shouldDistributeOverflow && remainingAmount > 0) {
         const nextSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
@@ -1000,8 +1019,8 @@ export class PaymentsService {
   }
 
   /**
-   * Resetear todos los pagos de un SubLoan
-   * Solo se permite si el último pago fue hace menos de 24 horas
+   * Resetear todos los pagos de un SubLoan.
+   * Solo se permite si el último pago fue hace menos de 24 horas.
    */
   async resetSubLoanPayments(
     subLoanId: string,
@@ -1074,16 +1093,16 @@ export class PaymentsService {
       );
     }
 
-    // Validar que el último pago no sea mayor a 20 horas
+    // Validar que el último pago no sea mayor a 24 horas
     // Usar createdAt (cuando se registró) en lugar de paymentDate (fecha del pago)
     const lastPayment = subLoan.payments[0];
     const lastPaymentCreatedAt = DateUtil.fromPrismaDate(lastPayment.createdAt);
     const now = DateUtil.now();
     const hoursDiff = now.diff(lastPaymentCreatedAt, 'hours').hours;
 
-    if (hoursDiff > 20) {
+    if (hoursDiff > 24) {
       throw new BadRequestException(
-        `No se puede resetear: el último pago fue hace ${Math.floor(hoursDiff)} horas. Solo se permiten reseteos de pagos realizados en las últimas 20 horas.`,
+        `No se puede resetear: el último pago fue hace ${Math.floor(hoursDiff)} horas. Solo se permiten reseteos de pagos realizados en las últimas 24 horas.`,
       );
     }
 
@@ -1156,12 +1175,14 @@ export class PaymentsService {
       const excessAmount = totalPaidAmount - currentSubLoanTotalAmount;
 
       if (excessAmount > 0) {
-        // Buscar subpréstamos parciales anteriores que recibieron el excedente
+        // Buscar subpréstamos anteriores que recibieron el excedente.
+        // Incluye PAID por si el excedente cerró por completo una cuota anterior:
+        // al revertir, la cuota vuelve a PARTIAL/PENDING según paidAmount resultante.
         const partialSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
             paymentNumber: { lt: subLoan.paymentNumber },
-            status: SubLoanStatus.PARTIAL,
+            status: { in: [SubLoanStatus.PARTIAL, SubLoanStatus.PAID] },
             deletedAt: null,
           },
           orderBy: { paymentNumber: 'desc' },
@@ -1609,12 +1630,14 @@ export class PaymentsService {
       const excessAmount = totalPaidAmount - currentSubLoanTotalAmount;
 
       if (excessAmount > 0) {
-        // Buscar subpréstamos parciales anteriores que recibieron el excedente
+        // Buscar subpréstamos anteriores que recibieron el excedente.
+        // Incluye PAID por si el excedente cerró por completo una cuota anterior:
+        // al revertir, la cuota vuelve a PARTIAL/PENDING según paidAmount resultante.
         const partialSubLoans = await tx.subLoan.findMany({
           where: {
             loanId: subLoan.loanId,
             paymentNumber: { lt: subLoan.paymentNumber },
-            status: SubLoanStatus.PARTIAL,
+            status: { in: [SubLoanStatus.PARTIAL, SubLoanStatus.PAID] },
             deletedAt: null,
           },
           orderBy: { paymentNumber: 'desc' },
@@ -1845,7 +1868,13 @@ export class PaymentsService {
           where: {
             loanId: subLoan.loanId,
             paymentNumber: { gt: subLoan.paymentNumber },
-            status: { in: [SubLoanStatus.PENDING, SubLoanStatus.PARTIAL] },
+            status: {
+              in: [
+                SubLoanStatus.PENDING,
+                SubLoanStatus.PARTIAL,
+                SubLoanStatus.OVERDUE,
+              ],
+            },
             deletedAt: null,
           },
           orderBy: { paymentNumber: 'asc' },
