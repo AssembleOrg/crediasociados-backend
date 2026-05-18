@@ -2025,6 +2025,11 @@ export class PaymentsService {
       timeout: 30000,
     });
 
+    // editPayment puede dejar la cuota PARTIAL (monto menor) o completar otras
+    // por distribucion de overflow → mantener consistente el status del Loan.
+    await this.revertCompletedLoanIfNeeded(subLoan.loanId);
+    await this.checkAndCompleteLoan(subLoan.loanId);
+
     return {
       payment: {
         ...result.payment,
