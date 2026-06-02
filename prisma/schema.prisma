@@ -113,6 +113,8 @@ model Loan {
   penaltyInterestRate Decimal          @db.Decimal(5, 2)
   totalPayments       Int
   loanTrack           String           @unique
+  // Monto total condonado al terminar el préstamo (quita). Default 0.
+  forgivenAmount      Decimal          @default(0) @db.Decimal(40, 2)
 
   // Campos para secuencia atómica
   prefix   String

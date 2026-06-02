@@ -36,8 +36,11 @@ export class PaymentsService {
       description,
       adjustedTotalAmount,
       distributeOverflow,
+      finishLoan,
     } = registerPaymentDto;
-    const shouldDistributeOverflow = distributeOverflow !== false;
+    // Al terminar el préstamo siempre distribuimos el excedente entre las cuotas
+    // restantes antes de condonar lo que falte.
+    const shouldDistributeOverflow = finishLoan ? true : distributeOverflow !== false;
 
     // Obtener el SubLoan con su Loan y Client
     const subLoan = await this.prisma.subLoan.findUnique({
@@ -614,6 +617,73 @@ export class PaymentsService {
         }
       }
 
+      // 3.5 Terminar préstamo: condonar el saldo restante.
+      // Tras cobrar y distribuir el monto ingresado, marcamos PAID todas las
+      // cuotas que aún tengan saldo, reduciendo su totalAmount a lo efectivamente
+      // pagado y acumulando la diferencia condonada en Loan.forgivenAmount.
+      let forgivenAmount = 0;
+      if (finishLoan) {
+        const pendingSubLoans = await tx.subLoan.findMany({
+          where: {
+            loanId: subLoan.loanId,
+            status: {
+              in: [
+                SubLoanStatus.PENDING,
+                SubLoanStatus.PARTIAL,
+                SubLoanStatus.OVERDUE,
+              ],
+            },
+            deletedAt: null,
+          },
+        });
+
+        const paidDateValue = paymentDate
+          ? DateUtil.parseToDate(paymentDate)
+          : DateUtil.now().toJSDate();
+
+        for (const sl of pendingSubLoans) {
+          const paid = Number(sl.paidAmount);
+          const total = Number(sl.totalAmount);
+          const forgiven = Math.max(0, total - paid);
+
+          await tx.subLoan.update({
+            where: { id: sl.id },
+            data: {
+              // Preservar el total original solo la primera vez que se toca.
+              originalTotalAmount: sl.originalTotalAmount ?? sl.totalAmount,
+              // El nuevo total pasa a ser lo efectivamente pagado → saldo 0.
+              totalAmount: new Prisma.Decimal(paid),
+              status: SubLoanStatus.PAID,
+              paidDate: paidDateValue,
+            },
+          });
+
+          if (forgiven > 0) {
+            forgivenAmount += forgiven;
+            distributedPayments.push({
+              subLoanId: sl.id,
+              paymentNumber: sl.paymentNumber,
+              distributedAmount: 0,
+              forgivenAmount: forgiven,
+              newStatus: SubLoanStatus.PAID,
+              newPaidAmount: paid,
+            });
+          }
+        }
+
+        if (forgivenAmount > 0) {
+          // Registrar la condonación: el préstamo "devuelve" menos y se asienta
+          // la pérdida en forgivenAmount.
+          await tx.loan.update({
+            where: { id: subLoan.loanId },
+            data: {
+              amount: { decrement: new Prisma.Decimal(forgivenAmount) },
+              forgivenAmount: { increment: new Prisma.Decimal(forgivenAmount) },
+            },
+          });
+        }
+      }
+
       // 4. Crear registro de pago
       const payment = await tx.payment.create({
         data: {
@@ -689,6 +759,7 @@ export class PaymentsService {
         subLoan: updatedSubLoan,
         distributedPayments,
         adjustmentApplied,
+        forgivenAmount,
       };
     }, {
       maxWait: 30000, // 30 segundos máximo de espera para iniciar la transacción
@@ -782,6 +853,7 @@ export class PaymentsService {
           Number(result.subLoan.paidAmount),
       },
       distributedPayments: result.distributedPayments,
+      forgivenAmount: Number(result.forgivenAmount ?? 0),
       loan: {
         id: subLoan.loan.id,
         loanTrack: subLoan.loan.loanTrack,

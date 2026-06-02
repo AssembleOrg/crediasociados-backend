@@ -78,4 +78,17 @@ export class RegisterPaymentDto {
   @IsOptional()
   @IsBoolean()
   distributeOverflow?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Si es true, "termina" el préstamo: el monto ingresado se cobra y distribuye normalmente, ' +
+      'y luego TODAS las cuotas restantes no pagadas se marcan como PAID condonando la diferencia. ' +
+      'La diferencia condonada se acumula en Loan.forgivenAmount y el préstamo queda COMPLETED. ' +
+      'Funciona tanto si el monto es menor como mayor al total adeudado. Fuerza la distribución del excedente.',
+    example: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  finishLoan?: boolean;
 }
