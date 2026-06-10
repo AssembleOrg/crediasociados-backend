@@ -165,4 +165,14 @@ export class LoanFiltersDto {
   @IsOptional()
   @IsEnum(['ACTIVE', 'COMPLETED', 'ALL'])
   loanStatus?: 'ACTIVE' | 'COMPLETED' | 'ALL';
+
+  @ApiPropertyOptional({ example: 1, description: 'Página (ignorado, se usa el param directo)' })
+  @IsOptional()
+  @Type(() => Number)
+  page?: number;
+
+  @ApiPropertyOptional({ example: 25, description: 'Limite (ignorado, se usa el param directo)' })
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number;
 }

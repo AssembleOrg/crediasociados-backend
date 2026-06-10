@@ -247,6 +247,18 @@ export class UsersController {
     );
   }
 
+  @Get('subadmin/managers-summary')
+  @Roles(UserRole.SUBADMIN, UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Obtener resumen de todos los managers del subadmin en una sola llamada',
+    description: 'Retorna totalClients, totalLoans, totalAmount y clientes (con createdAt) para cada manager. Reemplaza N llamadas a clients/chart + loans/chart.',
+  })
+  @ApiResponse({ status: 200, description: 'Resumen de managers obtenido exitosamente' })
+  async getSubadminManagersSummary(@Req() req: any) {
+    return this.usersService.getSubadminManagersSummary(req.user.id);
+  }
+
   @Get(':managerId/clients/chart')
   @Roles(
     UserRole.SUPERADMIN,

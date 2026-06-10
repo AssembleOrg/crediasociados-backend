@@ -1677,5 +1677,120 @@ export class CollectionRoutesService {
       expenses: transformedExpenses,
     };
   }
+
+  /**
+   * Reprogramar una cuota: cambiar su dueDate y eliminar el item de la ruta del dia.
+   * Si se provee newAmount distinto al totalAmount actual, se aplica como recargo/descuento:
+   * actualiza SubLoan.totalAmount y propaga el delta a Loan.amount en la misma transaccion.
+   */
+  async rescheduleRouteItem(
+    itemId: string,
+    userId: string,
+    newDueDate: string,
+    newAmount?: number,
+  ) {
+    // Validar que la fecha sea futura
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const targetDate = new Date(newDueDate);
+    targetDate.setHours(0, 0, 0, 0);
+
+    if (targetDate < today) {
+      throw new BadRequestException('La fecha no puede ser anterior a hoy');
+    }
+
+    // Buscar el item con su ruta y subloan
+    const item = await this.prisma.collectionRouteItem.findUnique({
+      where: { id: itemId },
+      include: {
+        route: true,
+        subLoan: true,
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException('Item de ruta no encontrado');
+    }
+
+    // Verificar que la ruta pertenece al manager
+    if (item.route.managerId !== userId) {
+      throw new ForbiddenException('No tienes acceso a este item');
+    }
+
+    // Verificar que la ruta esta activa
+    if (item.route.status !== 'ACTIVE') {
+      throw new BadRequestException('Solo se pueden reprogramar items de rutas activas');
+    }
+
+    if (!item.subLoanId || !item.subLoan) {
+      throw new BadRequestException('Este item no tiene un subloan asociado');
+    }
+
+    const isNewDateToday = targetDate.getTime() === today.getTime();
+    const normalizedDueDate = new Date(newDueDate.slice(0, 10) + 'T12:00:00');
+
+    // Resolver cambio de monto (si aplica)
+    const currentTotal = new Decimal(item.subLoan.totalAmount);
+    const paidAmount = new Decimal(item.subLoan.paidAmount);
+    let amountChanged = false;
+    let newTotalDecimal = currentTotal;
+    let amountDelta = new Decimal(0);
+
+    if (newAmount !== undefined && newAmount !== null) {
+      if (!Number.isFinite(newAmount) || newAmount < 0) {
+        throw new BadRequestException('El monto debe ser un numero valido mayor o igual a cero');
+      }
+      newTotalDecimal = new Decimal(newAmount);
+      if (!newTotalDecimal.equals(currentTotal)) {
+        if (newTotalDecimal.lessThan(paidAmount)) {
+          throw new BadRequestException(
+            `El nuevo monto no puede ser menor al ya pagado (${paidAmount.toString()})`,
+          );
+        }
+        amountChanged = true;
+        amountDelta = newTotalDecimal.minus(currentTotal);
+      }
+    }
+
+    const subLoanData: Prisma.SubLoanUpdateInput = { dueDate: normalizedDueDate };
+    if (amountChanged) {
+      subLoanData.totalAmount = newTotalDecimal;
+    }
+
+    const operations: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.subLoan.update({
+        where: { id: item.subLoanId },
+        data: subLoanData,
+      }),
+    ];
+
+    if (amountChanged) {
+      operations.push(
+        this.prisma.loan.update({
+          where: { id: item.subLoan.loanId },
+          data: { amount: { increment: amountDelta } },
+        }),
+      );
+    }
+
+    if (!isNewDateToday) {
+      operations.push(
+        this.prisma.collectionRouteItem.delete({ where: { id: itemId } }),
+      );
+    }
+
+    await this.prisma.$transaction(operations);
+
+    return {
+      message: isNewDateToday
+        ? 'Fecha actualizada. La cuota permanece en la ruta de hoy.'
+        : 'Cuota reprogramada y eliminada de la ruta',
+      subLoanId: item.subLoanId,
+      newDueDate,
+      removedItemId: isNewDateToday ? null : itemId,
+      newAmount: amountChanged ? newTotalDecimal.toNumber() : null,
+      amountDelta: amountChanged ? amountDelta.toNumber() : 0,
+    };
+  }
 }
 

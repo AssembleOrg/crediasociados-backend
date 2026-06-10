@@ -52,6 +52,12 @@ export class AuthService {
 
     const user = users[0];
 
+    // BYPASS LOCAL: solo activo si NODE_ENV !== 'production'
+    // if (user && process.env.NODE_ENV !== 'production') {
+    //   const { password: _, ...result } = user;
+    //   return result;
+    // }
+
     if (user && (await bcrypt.compare(password, user.password))) {
       const { password: _, ...result } = user;
       return result;

@@ -21,6 +21,7 @@ import { AuditModule } from './audit/audit.module';
 import { CollectionRoutesModule } from './collection-routes/collection-routes.module';
 import { CollectorWalletModule } from './collector-wallet/collector-wallet.module';
 import { SafeModule } from './safe/safe.module';
+import { BlacklistModule } from './blacklist/blacklist.module';
 import { RabbitMQModule } from './rabbitmq/rabbitmq.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
@@ -38,7 +39,7 @@ import configuration from './config/configuration';
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
-        limit: 100,
+        limit: 50,
       },
     ]),
     PrismaModule,
@@ -58,6 +59,7 @@ import configuration from './config/configuration';
     CollectionRoutesModule,
     CollectorWalletModule,
     SafeModule,
+    BlacklistModule,
     RabbitMQModule,
   ],
   controllers: [AppController],

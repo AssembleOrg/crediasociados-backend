@@ -5,6 +5,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import * as compression from 'compression';
+import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -13,6 +14,7 @@ async function bootstrap() {
   // Security middleware
   app.use(helmet());
   app.use(compression());
+  app.use(cookieParser());
 
   // CORS configuration
   // Allow specific origins for security while enabling frontend integration
@@ -29,6 +31,7 @@ async function bootstrap() {
       'http://127.0.0.1:3001',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:8080',
+      'https://inspiring-sparkle-production-c2b4.up.railway.app/'
     ],
     credentials: true, // Allow cookies/auth headers
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

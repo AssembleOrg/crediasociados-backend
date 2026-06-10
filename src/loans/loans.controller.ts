@@ -11,6 +11,7 @@ import {
   BadRequestException,
   Delete,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -28,6 +29,8 @@ import {
   TodayLoansDto,
   TodayLoanItemDto,
   UpdateLoanDescriptionDto,
+  UpdateLoanFirstDueDateDto,
+  RenewLoanDto,
 } from './dto';
 import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -98,6 +101,7 @@ export class LoansController {
 
   @Get('tracking')
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 requests per minute per IP
   @ApiOperation({
     summary:
       'Obtener información del préstamo por DNI y código de tracking (Endpoint público)',
@@ -453,6 +457,21 @@ export class LoansController {
     return this.loansService.getTodayLoans(req.user.id, req.user.role);
   }
 
+  @Patch(':id/first-due-date')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Actualizar fecha del primer vencimiento de un préstamo' })
+  @ApiResponse({ status: 200, description: 'Fecha actualizada exitosamente' })
+  @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
+  async updateFirstDueDate(
+    @Param('id') id: string,
+    @Body() dto: UpdateLoanFirstDueDateDto,
+    @Request() req,
+  ) {
+    return this.loansService.updateFirstDueDate(id, req.user.id, dto.firstDueDate);
+  }
+
   @Patch(':id/description')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.MANAGER)
@@ -467,6 +486,42 @@ export class LoansController {
     @Request() req,
   ) {
     return this.loansService.updateDescription(id, req.user.id, dto.description || '');
+  }
+
+  @Post(':id/renew')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Renovar un préstamo: cancela el saldo pendiente y crea uno nuevo',
+    description:
+      'Cancela todas las cuotas pendientes del préstamo actual (ingreso total a la wallet), lo marca COMPLETED, y crea inmediatamente un nuevo préstamo con capital, tasa, frecuencia y cuotas configurables (defaults del viejo). Todo en una transacción atómica. Devuelve el PDF del nuevo préstamo en base64.',
+  })
+  @ApiResponse({ status: 201, description: 'Préstamo renovado exitosamente' })
+  @ApiResponse({
+    status: 400,
+    description: 'Préstamo sin saldo pendiente o ya completado',
+  })
+  @ApiResponse({ status: 404, description: 'Préstamo no encontrado' })
+  async renewLoan(
+    @Param('id') id: string,
+    @Body() dto: RenewLoanDto,
+    @Request() req,
+  ) {
+    return this.loansService.renewLoan(id, req.user.id, dto);
+  }
+
+  @Get('dashboard-stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.MANAGER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Stats livianas para el dashboard del prestamista',
+    description: 'Retorna loans por semana + distribucion de subloans por status. Sin datos pesados.',
+  })
+  @ApiResponse({ status: 200, description: 'Stats obtenidas exitosamente' })
+  async getDashboardStats(@Request() req) {
+    return this.loansService.getDashboardStats(req.user.id);
   }
 
   @Get(':id')
@@ -591,4 +646,5 @@ export class LoansController {
       groupBy,
     );
   }
+
 }

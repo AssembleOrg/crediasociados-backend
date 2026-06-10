@@ -1134,6 +1134,7 @@ export class ClientsService {
       select: {
         id: true,
         fullName: true,
+        dni: true,
         phone: true,
         address: true,
         description: true,
@@ -1149,6 +1150,7 @@ export class ClientsService {
       clients: unverifiedClients.map((client) => ({
         id: client.id,
         nombre: client.fullName,
+        dni: client.dni,
         telefono: client.phone,
         direccion: client.address,
         description: client.description,
