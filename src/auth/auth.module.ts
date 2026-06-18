@@ -14,12 +14,14 @@ import { Logger } from '@nestjs/common';
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('jwt.secret'),
-        signOptions: {
-          expiresIn: configService.get<string>('jwt.expiresIn'),
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const expiresIn = configService.get<string>('jwt.expiresIn');
+        return {
+          secret: configService.get<string>('jwt.secret'),
+          // expiresIn ausente => sin claim exp => access token no expira
+          signOptions: expiresIn ? { expiresIn } : {},
+        };
+      },
       inject: [ConfigService],
     }),
   ],

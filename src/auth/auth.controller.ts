@@ -46,7 +46,7 @@ export class AuthController {
       secure: this.cookieIsSecure,
       sameSite: 'lax',
       path: '/',
-      maxAge: 15 * 60 * 1000, // 15m
+      maxAge: 10 * 365 * 24 * 60 * 60 * 1000, // 10 años (sin límite efectivo)
     });
 
     response.cookie(this.refreshTokenCookieName, refreshToken, {
