@@ -1,0 +1,8 @@
+# El build necesita devDependencies (@nestjs/cli para `nest build`).
+# Railway setea NODE_ENV=production, que hace que pnpm las saltee, por eso
+# forzamos --prod=false en install. En runtime se corre el compilado (start:prod).
+[phases.install]
+cmds = ["pnpm i --frozen-lockfile --prod=false"]
+
+[start]
+cmd = "pnpm run start:prod"
