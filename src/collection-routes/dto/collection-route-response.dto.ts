@@ -49,6 +49,16 @@ export class CollectionRouteResponseDto {
   @ApiProperty({ type: [CollectionRouteItemResponseDto] })
   items: CollectionRouteItemResponseDto[];
 
+  @ApiProperty({
+    type: [CollectionRouteItemResponseDto],
+    description:
+      'Cuotas en arrastre (Norma 2): cuotas impagas de préstamos ACTIVE del manager ' +
+      'cuyo día de vencimiento (weekday) coincide con el día de la ruta y vencieron ' +
+      'antes de hoy. Virtual/read-only: no se persisten ni afectan totales. ' +
+      'Para cobrarlas se usa el flujo de pago normal.',
+  })
+  carryOverItems: CollectionRouteItemResponseDto[];
+
   @ApiProperty({ type: [RouteExpenseResponseDto] })
   expenses: RouteExpenseResponseDto[];
 

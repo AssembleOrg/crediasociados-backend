@@ -25,6 +25,13 @@ export class CollectionRouteItemResponseDto {
   @ApiProperty({ example: 5000.0 })
   amountCollected: number;
 
+  @ApiProperty({
+    description:
+      'Deuda previa del cliente: cuotas impagas (OVERDUE/PARTIAL/PENDING) de préstamos ACTIVE con vencimiento anterior al día de la ruta. Informativo.',
+    example: { count: 2, amount: 12000.0 },
+  })
+  clientPreviousDebt: { count: number; amount: number };
+
   @ApiPropertyOptional({ example: 'Cliente pagó completo' })
   notes?: string;
 

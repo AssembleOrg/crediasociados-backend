@@ -514,6 +514,7 @@ export class CollectionRoutesService {
                 loan: {
                   select: {
                     id: true,
+                    clientId: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -766,6 +767,7 @@ export class CollectionRoutesService {
                 loan: {
                   select: {
                     id: true,
+                    clientId: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -1000,6 +1002,7 @@ export class CollectionRoutesService {
                 loan: {
                   select: {
                     id: true,
+                    clientId: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -1186,6 +1189,7 @@ export class CollectionRoutesService {
                 loan: {
                   select: {
                     id: true,
+                    clientId: true,
                     loanTrack: true,
                     amount: true,
                     currency: true,
@@ -1528,6 +1532,120 @@ export class CollectionRoutesService {
       }
     }
 
+    // Norma 1: deuda previa por cliente.
+    // Cuotas impagas (OVERDUE/PARTIAL/PENDING) de préstamos ACTIVE del mismo
+    // cliente con dueDate ANTERIOR al día de la ruta. Informativo (read-only).
+    const routeDayStart = DateUtil.startOfDay(
+      DateUtil.fromJSDate(route.routeDate),
+    ).toJSDate();
+    const clientIds: string[] = Array.from(
+      new Set(
+        route.items
+          .map((item: any) => item.subLoan?.loan?.clientId as string | undefined)
+          .filter((id: any): id is string => typeof id === 'string' && !!id),
+      ),
+    );
+    const clientPreviousDebtMap = new Map<
+      string,
+      { count: number; amount: number }
+    >();
+    if (clientIds.length > 0) {
+      const prevSubLoans = await this.prisma.subLoan.findMany({
+        where: {
+          loan: { clientId: { in: clientIds }, status: 'ACTIVE' },
+          status: { in: ['OVERDUE', 'PARTIAL', 'PENDING'] },
+          dueDate: { lt: routeDayStart },
+          deletedAt: null,
+        },
+        select: {
+          totalAmount: true,
+          paidAmount: true,
+          loan: { select: { clientId: true } },
+        },
+      });
+      for (const sl of prevSubLoans) {
+        const cid = sl.loan?.clientId;
+        if (!cid) continue;
+        const remaining = Number(sl.totalAmount) - Number(sl.paidAmount);
+        if (remaining <= 0) continue;
+        const cur = clientPreviousDebtMap.get(cid) || { count: 0, amount: 0 };
+        cur.count += 1;
+        cur.amount += remaining;
+        clientPreviousDebtMap.set(cid, cur);
+      }
+    }
+
+    // Norma 2: cuotas en arrastre (virtual, no persiste ni afecta totales).
+    // Cuotas impagas de préstamos ACTIVE del manager, vencidas antes del día de
+    // la ruta, cuyo weekday de vencimiento coincide con el de la ruta
+    // (ej: cuota que vencía los lunes reaparece todos los lunes hasta pagar).
+    const routeWeekday = DateUtil.fromJSDate(route.routeDate).weekday; // 1=lun..7=dom
+    const carryCandidates = await this.prisma.subLoan.findMany({
+      where: {
+        loan: { managerId: route.managerId, status: 'ACTIVE' },
+        status: { in: ['OVERDUE', 'PARTIAL', 'PENDING'] },
+        dueDate: { lt: routeDayStart },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        paymentNumber: true,
+        amount: true,
+        totalAmount: true,
+        paidAmount: true,
+        status: true,
+        dueDate: true,
+        daysOverdue: true,
+        loan: {
+          select: {
+            id: true,
+            clientId: true,
+            loanTrack: true,
+            amount: true,
+            currency: true,
+            client: {
+              select: { id: true, fullName: true, phone: true, address: true },
+            },
+          },
+        },
+      },
+      orderBy: { dueDate: 'asc' },
+    });
+    const carryOverItems = carryCandidates
+      .filter(
+        (sl: any) =>
+          Number(sl.totalAmount) - Number(sl.paidAmount) > 0 &&
+          DateUtil.fromJSDate(sl.dueDate).weekday === routeWeekday,
+      )
+      .map((sl: any, idx: number) => ({
+        // id virtual: prefijo para que el front no lo confunda con un item real
+        id: `carry-${sl.id}`,
+        routeId: route.id,
+        subLoanId: sl.id,
+        clientName: sl.loan?.client?.fullName ?? '',
+        clientPhone: sl.loan?.client?.phone ?? undefined,
+        clientAddress: sl.loan?.client?.address ?? undefined,
+        orderIndex: idx,
+        amountCollected: 0,
+        clientPreviousDebt: { count: 0, amount: 0 },
+        notes: undefined,
+        createdAt: route.createdAt,
+        updatedAt: route.updatedAt,
+        subLoan: {
+          id: sl.id,
+          paymentNumber: sl.paymentNumber,
+          amount: Number(sl.amount),
+          totalAmount: Number(sl.totalAmount),
+          paidAmount: Number(sl.paidAmount),
+          status: sl.status,
+          dueDate: sl.dueDate,
+          daysOverdue: sl.daysOverdue,
+          loan: sl.loan,
+          outstandingBalance: null,
+          payments: [],
+        },
+      }));
+
     return {
       id: route.id,
       managerId: route.managerId,
@@ -1546,6 +1664,10 @@ export class CollectionRoutesService {
       items: route.items.map((item: any) => {
         const loanId = item.subLoan?.loan?.id;
         const outstandingBalance = loanId ? outstandingBalancesMap.get(loanId) ?? null : null;
+        const clientId = item.subLoan?.loan?.clientId;
+        const clientPreviousDebt = clientId
+          ? clientPreviousDebtMap.get(clientId) ?? { count: 0, amount: 0 }
+          : { count: 0, amount: 0 };
 
         return {
         id: item.id,
@@ -1556,6 +1678,7 @@ export class CollectionRoutesService {
         clientAddress: item.clientAddress,
         orderIndex: item.orderIndex,
         amountCollected: Number(item.amountCollected),
+        clientPreviousDebt,
         notes: item.notes,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
@@ -1583,6 +1706,7 @@ export class CollectionRoutesService {
           : undefined,
         };
       }),
+      carryOverItems,
       expenses: (route.expenses || []).map((expense: any) => ({
         id: expense.id,
         routeId: expense.routeId,
