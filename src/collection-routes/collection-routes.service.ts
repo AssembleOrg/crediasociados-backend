@@ -1577,8 +1577,12 @@ export class CollectionRoutesService {
 
     // Norma 2: cuotas en arrastre (virtual, no persiste ni afecta totales).
     // Cuotas impagas de préstamos ACTIVE del manager, vencidas antes del día de
-    // la ruta, cuyo weekday de vencimiento coincide con el de la ruta
-    // (ej: cuota que vencía los lunes reaparece todos los lunes hasta pagar).
+    // la ruta, cuyo weekday de vencimiento coincide con el de la ruta.
+    // RECORTE: solo préstamos cuyo cronograma ya se agotó (ninguna cuota con
+    // dueDate >= día de la ruta). Si el préstamo sigue en curso (quedan cuotas
+    // futuras / del día), NO se muestra el arrastre.
+    // (ej: plan de 5 cuotas, pagó 3, las dueDate ya pasaron todas → la cuota que
+    // vencía los lunes reaparece todos los lunes hasta completar 5/5.)
     const routeWeekday = DateUtil.fromJSDate(route.routeDate).weekday; // 1=lun..7=dom
     const carryCandidates = await this.prisma.subLoan.findMany({
       where: {
@@ -1611,11 +1615,36 @@ export class CollectionRoutesService {
       },
       orderBy: { dueDate: 'asc' },
     });
+    // Préstamos que TODAVÍA tienen cuotas con dueDate >= día de la ruta (en
+    // curso). Para esos NO se arrastra: el cronograma no se agotó.
+    const carryLoanIds = Array.from(
+      new Set(
+        carryCandidates
+          .map((sl: any) => sl.loan?.id as string | undefined)
+          .filter((id: any): id is string => !!id),
+      ),
+    );
+    const loansWithFutureDues =
+      carryLoanIds.length > 0
+        ? await this.prisma.subLoan.findMany({
+            where: {
+              loanId: { in: carryLoanIds },
+              dueDate: { gte: routeDayStart },
+              deletedAt: null,
+            },
+            select: { loanId: true },
+            distinct: ['loanId'],
+          })
+        : [];
+    const inCourseLoanIds = new Set(
+      loansWithFutureDues.map((s: any) => s.loanId),
+    );
     const carryOverItems = carryCandidates
       .filter(
         (sl: any) =>
           Number(sl.totalAmount) - Number(sl.paidAmount) > 0 &&
-          DateUtil.fromJSDate(sl.dueDate).weekday === routeWeekday,
+          DateUtil.fromJSDate(sl.dueDate).weekday === routeWeekday &&
+          !inCourseLoanIds.has(sl.loan?.id),
       )
       .map((sl: any, idx: number) => ({
         // id virtual: prefijo para que el front no lo confunda con un item real
