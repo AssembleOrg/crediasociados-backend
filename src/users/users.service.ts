@@ -385,21 +385,33 @@ export class UsersService {
       }
     }
 
-    // Calcular la suma de clientQuota de todos los usuarios creados por este usuario
-    const createdUsers = await this.prisma.user.findMany({
-      where: {
-        createdById: userId,
-        deletedAt: null,
-      },
-      select: {
-        clientQuota: true,
-      },
-    });
+    let newUsedQuota: number;
 
-    const newUsedQuota = createdUsers.reduce(
-      (sum, createdUser) => sum + createdUser.clientQuota,
-      0,
-    );
+    if (convertPrismaUserRole(user.role) === UserRole.MANAGER) {
+      // Para MANAGER la cuota usada es la cantidad de clientes asignados activos
+      newUsedQuota = await this.prisma.clientManager.count({
+        where: {
+          userId,
+          deletedAt: null,
+        },
+      });
+    } else {
+      // Calcular la suma de clientQuota de todos los usuarios creados por este usuario
+      const createdUsers = await this.prisma.user.findMany({
+        where: {
+          createdById: userId,
+          deletedAt: null,
+        },
+        select: {
+          clientQuota: true,
+        },
+      });
+
+      newUsedQuota = createdUsers.reduce(
+        (sum, createdUser) => sum + createdUser.clientQuota,
+        0,
+      );
+    }
 
     // Actualizar el usedClientQuota
     await this.prisma.user.update({

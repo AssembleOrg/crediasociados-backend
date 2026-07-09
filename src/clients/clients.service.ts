@@ -432,10 +432,20 @@ export class ClientsService {
       );
     }
 
-    // Eliminar la relación client-manager de este manager
-    await this.prisma.clientManager.delete({
-      where: { id: clientManager.id },
-    });
+    // Eliminar la relación client-manager y liberar cuota del manager
+    await this.prisma.$transaction([
+      this.prisma.clientManager.delete({
+        where: { id: clientManager.id },
+      }),
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          usedClientQuota: {
+            decrement: 1,
+          },
+        },
+      }),
+    ]);
 
     // Solo eliminar el cliente si no queda ningún otro manager asignado
     const remainingManagers = await this.prisma.clientManager.count({
