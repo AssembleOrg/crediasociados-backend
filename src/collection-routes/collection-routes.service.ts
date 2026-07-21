@@ -497,68 +497,107 @@ export class CollectionRoutesService {
       );
     }
 
-    const route = await this.prisma.dailyCollectionRoute.findFirst({
-      where: {
-        managerId: targetManagerId,
-        routeDate: today, // Esta variable ya está correctamente definida como DateUtil.now().startOf('day').toJSDate()
-        // OR: [
-        //   { status: 'ACTIVE' },
-        //   { status: 'CLOSED' },
-        // ],
-      },
-      include: {
-        items: {
-          include: {
-            subLoan: {
-              include: {
-                loan: {
-                  select: {
-                    id: true,
-                    clientId: true,
-                    loanTrack: true,
-                    amount: true,
-                    currency: true,
-                  },
+    const routeInclude = {
+      items: {
+        include: {
+          subLoan: {
+            include: {
+              loan: {
+                select: {
+                  id: true,
+                  clientId: true,
+                  loanTrack: true,
+                  amount: true,
+                  currency: true,
                 },
-                payments: {
-                  select: {
-                    id: true,
-                    description: true,
-                    amount: true,
-                    paymentDate: true,
-                    createdAt: true,
-                  },
-                  orderBy: {
-                    createdAt: 'desc',
-                  },
+              },
+              payments: {
+                select: {
+                  id: true,
+                  description: true,
+                  amount: true,
+                  paymentDate: true,
+                  createdAt: true,
+                },
+                orderBy: {
+                  createdAt: 'desc',
                 },
               },
             },
           },
-          orderBy: {
-            orderIndex: 'asc',
-          },
         },
-        expenses: {
-          orderBy: {
-            createdAt: 'asc',
-          },
-        },
-        manager: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            phone: true,
-          },
+        orderBy: {
+          orderIndex: 'asc',
         },
       },
+      expenses: {
+        orderBy: {
+          createdAt: 'asc',
+        },
+      },
+      manager: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+        },
+      },
+    } satisfies Prisma.DailyCollectionRouteInclude;
+
+    let route = await this.prisma.dailyCollectionRoute.findFirst({
+      where: {
+        managerId: targetManagerId,
+        routeDate: today,
+      },
+      include: routeInclude,
     });
 
     if (!route) {
-      throw new NotFoundException(
-        'No hay ruta activa para hoy. Se creará automáticamente a las 4:15 AM',
-      );
+      // Solo el propio MANAGER puede auto-crear su ruta del día.
+      // SUBADMIN/ADMIN que consultan la ruta de un manager solo visualizan → 404.
+      if (userRole !== UserRole.MANAGER) {
+        throw new NotFoundException(
+          'No hay ruta activa para hoy. Se creará automáticamente a las 4:15 AM',
+        );
+      }
+
+      // Crear ruta vacía on-demand: permite cargar gastos aunque no haya cobros del día.
+      // @@unique([managerId, routeDate]) protege ante requests concurrentes (P2002).
+      try {
+        await this.prisma.dailyCollectionRoute.create({
+          data: {
+            managerId: targetManagerId,
+            routeDate: today,
+            status: 'ACTIVE',
+            totalCollected: new Decimal(0),
+            totalExpenses: new Decimal(0),
+            netAmount: new Decimal(0),
+          },
+        });
+      } catch (error) {
+        if (
+          !(
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          )
+        ) {
+          throw error;
+        }
+        // Otra request ya creó la ruta: continuar y re-consultar.
+      }
+
+      route = await this.prisma.dailyCollectionRoute.findFirst({
+        where: {
+          managerId: targetManagerId,
+          routeDate: today,
+        },
+        include: routeInclude,
+      });
+
+      if (!route) {
+        throw new NotFoundException('No se pudo crear la ruta del día');
+      }
     }
 
     return await this.transformRouteToDto(route);
