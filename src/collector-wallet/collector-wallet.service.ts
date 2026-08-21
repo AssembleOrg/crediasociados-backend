@@ -2820,14 +2820,13 @@ export class CollectorWalletService {
       where: {
         managerId: { in: managerIds },
         deletedAt: null,
-        status: 'ACTIVE',
       },
       select: {
         managerId: true,
-        amount: true,
         subLoans: {
           where: { deletedAt: null },
           select: {
+            amount: true,
             totalAmount: true,
             paidAmount: true,
             status: true,
@@ -2836,21 +2835,26 @@ export class CollectorWalletService {
       },
     });
 
+    // Misma lógica que getManagerDetail: solo cuotas no pagadas.
+    // dineroEnCalle = pendiente con intereses; dineroPrestado = capital pendiente.
     const dineroEnCalleByManager = new Map<string, number>();
     const dineroPrestadoByManager = new Map<string, number>();
     for (const loan of allActiveLoans) {
       if (!loan.managerId) continue;
-      const pending = loan.subLoans.reduce(
-        (sum, sl) => sum + Math.max(0, Number(sl.totalAmount) - Number(sl.paidAmount)),
-        0,
-      );
+      let pending = 0;
+      let capital = 0;
+      for (const sl of loan.subLoans) {
+        if (sl.status === 'PAID') continue;
+        pending += Math.max(0, Number(sl.totalAmount) - Number(sl.paidAmount));
+        capital += Number(sl.amount);
+      }
       dineroEnCalleByManager.set(
         loan.managerId,
         (dineroEnCalleByManager.get(loan.managerId) || 0) + pending,
       );
       dineroPrestadoByManager.set(
         loan.managerId,
-        (dineroPrestadoByManager.get(loan.managerId) || 0) + Number(loan.amount),
+        (dineroPrestadoByManager.get(loan.managerId) || 0) + capital,
       );
     }
 
