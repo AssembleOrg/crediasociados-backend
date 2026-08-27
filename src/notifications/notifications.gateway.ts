@@ -19,6 +19,10 @@ type AuthedSocket = Socket & { data: { userId?: string } };
  */
 @WebSocketGateway({
   namespace: '/notifications',
+  // Bajo el prefijo /api/v1 para que el proxy/rewrite del frontend Next
+  // (que solo reenvía /api/*) alcance el handshake de socket.io con la
+  // cookie de sesión (SameSite=lax exige same-origin en el browser).
+  path: '/api/v1/socket.io',
   cors: {
     origin: true,
     credentials: true,
