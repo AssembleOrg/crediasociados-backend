@@ -35,6 +35,9 @@ model User {
   safeExpenses       SafeExpense[]                @relation("SubadminExpenses")
   createdBy          User?                        @relation("UserCreatedBy", fields: [createdById], references: [id])
   createdUsers       User[]                       @relation("UserCreatedBy")
+  notifications      Notification[]
+  clientLosses       ClientLoss[]                 @relation("LossManager")
+  revertedLosses     ClientLoss[]                 @relation("LossRevertedBy")
 
   @@map("users")
 }
@@ -57,6 +60,7 @@ model Client {
   managers     ClientManager[]
   loans        Loan[]
   transactions Transaction[]
+  losses       ClientLoss[]
 
   @@map("clients")
 }
@@ -610,6 +614,58 @@ enum SafeTransactionType {
   TRANSFER_FROM_COLLECTOR // Transferencia desde wallet de cobros (retiro)
   TRANSFER_TO_SAFE // Transferencia a otra caja fuerte
   TRANSFER_FROM_SAFE // Transferencia desde otra caja fuerte
+}
+
+// Registro de baja de cliente por pérdida (deuda incobrable).
+// El cobrador (MANAGER) la ejecuta; el subadmin puede revertirla hasta 96hs después.
+model ClientLoss {
+  id            String    @id @default(cuid())
+  clientId      String
+  managerId     String
+  reason        String    @default("PERDIDA")
+  notes         String?
+  lostAmount    Decimal   @default(0) @db.Decimal(40, 2) // deuda pendiente al momento de la baja
+  loansSnapshot Json // [{loanId, loanTrack, prevStatus, pendingAmount}] para poder revertir
+  lossAt        DateTime // timestamp usado como deletedAt de loans/subloans afectados
+  blacklistId   String? // entrada de blacklist creada por esta pérdida
+  revertedAt    DateTime?
+  revertedById  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+  client        Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  manager       User      @relation("LossManager", fields: [managerId], references: [id], onDelete: Cascade)
+  revertedBy    User?     @relation("LossRevertedBy", fields: [revertedById], references: [id])
+
+  @@index([managerId])
+  @@index([clientId])
+  @@index([createdAt])
+  @@map("client_losses")
+}
+
+enum NotificationType {
+  CLIENT_CREATED
+  CLIENT_LOSS
+  CLIENT_LOSS_REVERTED
+  LOAN_FINISHED_EARLY
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String // destinatario
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
 }
 
 model BlacklistedClient {

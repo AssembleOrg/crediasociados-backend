@@ -8,7 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
 import { RegisterPaymentDto, BulkPaymentDto } from './dto';
-import { Prisma, SubLoanStatus, UserRole } from '@prisma/client';
+import { NotificationType, Prisma, SubLoanStatus, UserRole } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { DateUtil } from '../common/utils';
 import { WalletTransactionType, CollectorWalletTransactionType } from '../common/enums';
 
@@ -18,6 +19,7 @@ export class PaymentsService {
     private prisma: PrismaService,
     private walletService: WalletService,
     private collectorWalletService: CollectorWalletService,
+    private notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -768,6 +770,35 @@ export class PaymentsService {
 
     // Check if all subloans are PAID → mark loan as COMPLETED
     await this.checkAndCompleteLoan(subLoan.loanId);
+
+    // Si el préstamo se terminó con quita (condonación de saldo), avisar al
+    // subadmin del cobrador: el crédito se cerró con menos plata de la pactada.
+    if (result.forgivenAmount > 0) {
+      const managerUser = await this.prisma.user.findUnique({
+        where: { id: managerId },
+        select: { fullName: true, createdById: true },
+      });
+      if (managerUser?.createdById) {
+        // subLoan.loan fue leído antes de la transacción: amount aún es el total pactado
+        const totalPactado = Number(subLoan.loan.amount);
+        await this.notificationsService.notify({
+          userId: managerUser.createdById,
+          type: NotificationType.LOAN_FINISHED_EARLY,
+          title: 'Crédito finalizado con quita',
+          message: `${managerUser.fullName} terminó el préstamo ${subLoan.loan.loanTrack} de ${subLoan.loan.client.fullName} condonando $${result.forgivenAmount.toLocaleString('es-AR')} del total pactado`,
+          data: {
+            loanId: subLoan.loanId,
+            loanTrack: subLoan.loan.loanTrack,
+            clientId: subLoan.loan.clientId,
+            clientName: subLoan.loan.client.fullName,
+            managerId,
+            managerName: managerUser.fullName,
+            forgivenAmount: result.forgivenAmount,
+            totalPactado,
+          },
+        });
+      }
+    }
 
     // Obtener todos los subLoans del préstamo actualizados después de la transacción
     const allSubLoans = await this.prisma.subLoan.findMany({

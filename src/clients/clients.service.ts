@@ -10,11 +10,15 @@ import { UserRole, LoanStatus } from 'src/common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 import { DateUtil } from '../common/utils';
-import { ClientManager } from '@prisma/client';
+import { ClientManager, NotificationType } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ClientsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   async create(
     createClientDto: CreateClientDto,
@@ -37,11 +41,25 @@ export class ClientsService {
       select: {
         clientQuota: true,
         usedClientQuota: true,
+        fullName: true,
+        createdById: true,
       },
     });
 
     if (!manager) {
       throw new NotFoundException('Manager not found');
+    }
+
+    // Rechazar clientes en la blacklist (dados de baja por pérdida, etc.)
+    if (createClientDto.dni) {
+      const blacklisted = await this.prisma.blacklistedClient.findFirst({
+        where: { dni: createClientDto.dni },
+      });
+      if (blacklisted) {
+        throw new BadRequestException(
+          `El DNI ${createClientDto.dni} está en la lista negra: ${blacklisted.reason}`,
+        );
+      }
     }
 
     // Verificar si ya existe un cliente con el mismo DNI o CUIT
@@ -95,23 +113,44 @@ export class ClientsService {
         );
       }
 
-      // Asignar el cliente existente al manager actual y actualizar cuota
-      await this.prisma.$transaction([
-        this.prisma.clientManager.create({
-          data: {
-            clientId: existingClient.id,
-            userId: userId,
-          },
-        }),
-        this.prisma.user.update({
+      // Asignar el cliente existente al manager actual y actualizar cuota.
+      // Si existe una relación borrada lógicamente (baja previa), restaurarla
+      // en vez de crear una nueva (respeta el unique [clientId, userId]).
+      await this.prisma.$transaction(async (tx) => {
+        const previousRelation = await tx.clientManager.findFirst({
+          where: { clientId: existingClient.id, userId: userId },
+        });
+
+        if (previousRelation) {
+          await tx.clientManager.update({
+            where: { id: previousRelation.id },
+            data: { deletedAt: null },
+          });
+        } else {
+          await tx.clientManager.create({
+            data: {
+              clientId: existingClient.id,
+              userId: userId,
+            },
+          });
+        }
+
+        await tx.user.update({
           where: { id: userId },
           data: {
             usedClientQuota: {
               increment: 1,
             },
           },
-        }),
-      ]);
+        });
+      });
+
+      await this.notifyClientCreated(
+        existingClient,
+        manager,
+        userId,
+        true,
+      );
 
       return {
         ...existingClient,
@@ -128,22 +167,57 @@ export class ClientsService {
       );
     }
 
-    // Crear nuevo cliente y actualizar cuota en una transacción
-    const result = await this.prisma.$transaction(async (tx) => {
-      const newClient = await tx.client.create({
-        data: {
-          ...createClientDto,
-          verified: false, // Siempre false al crear
-        },
-      });
+    // El borrado de clientes es lógico: si existe un cliente soft-deleted con
+    // el mismo DNI/CUIT hay que restaurarlo (el unique de dni/cuit es global).
+    const softDeletedClient = await this.prisma.client.findFirst({
+      where: {
+        deletedAt: { not: null },
+        OR: [
+          ...(createClientDto.dni ? [{ dni: createClientDto.dni }] : []),
+          ...(createClientDto.cuit ? [{ cuit: createClientDto.cuit }] : []),
+        ],
+      },
+    });
 
-      // Asignar el cliente al manager que lo creó
-      await tx.clientManager.create({
-        data: {
-          clientId: newClient.id,
-          userId: userId,
-        },
+    // Crear (o restaurar) el cliente y actualizar cuota en una transacción
+    const result = await this.prisma.$transaction(async (tx) => {
+      let newClient;
+      if (softDeletedClient) {
+        newClient = await tx.client.update({
+          where: { id: softDeletedClient.id },
+          data: {
+            ...createClientDto,
+            verified: false,
+            deletedAt: null,
+          },
+        });
+      } else {
+        newClient = await tx.client.create({
+          data: {
+            ...createClientDto,
+            verified: false, // Siempre false al crear
+          },
+        });
+      }
+
+      // Asignar el cliente al manager que lo creó, restaurando la relación
+      // previa si había una borrada lógicamente
+      const previousRelation = await tx.clientManager.findFirst({
+        where: { clientId: newClient.id, userId: userId },
       });
+      if (previousRelation) {
+        await tx.clientManager.update({
+          where: { id: previousRelation.id },
+          data: { deletedAt: null },
+        });
+      } else {
+        await tx.clientManager.create({
+          data: {
+            clientId: newClient.id,
+            userId: userId,
+          },
+        });
+      }
 
       // Incrementar la cuota utilizada
       await tx.user.update({
@@ -158,11 +232,52 @@ export class ClientsService {
       return newClient;
     });
 
+    await this.notifyClientCreated(result, manager, userId, false);
+
     return {
       ...result,
       isExistingClient: false,
       message: 'Cliente creado exitosamente',
     };
+  }
+
+  /**
+   * Notifica al subadmin del cobrador el alta de un cliente, con la ficha
+   * completa que cargó el cobrador.
+   */
+  private async notifyClientCreated(
+    client: any,
+    manager: { fullName: string; createdById: string | null },
+    managerId: string,
+    isExistingClient: boolean,
+  ) {
+    if (!manager.createdById) return;
+
+    await this.notificationsService.notify({
+      userId: manager.createdById,
+      type: NotificationType.CLIENT_CREATED,
+      title: isExistingClient
+        ? 'Cliente existente asignado a un cobrador'
+        : 'Nuevo cliente cargado',
+      message: `${manager.fullName} ${isExistingClient ? 'se asignó el cliente' : 'cargó al cliente'} ${client.fullName}`,
+      data: {
+        clientId: client.id,
+        managerId,
+        managerName: manager.fullName,
+        isExistingClient,
+        client: {
+          fullName: client.fullName,
+          dni: client.dni,
+          cuit: client.cuit,
+          phone: client.phone,
+          email: client.email,
+          address: client.address,
+          job: client.job,
+          work: client.work,
+          description: client.description,
+        },
+      },
+    });
   }
 
   async findAll(
@@ -237,6 +352,18 @@ export class ClientsService {
   }
 
   async findOne(id: string, userId: string, userRole: UserRole) {
+    // Restringir qué préstamos se ven en la ficha:
+    // MANAGER solo los propios; SUBADMIN solo los de sus cobradores
+    // (no debe ver préstamos ni montos de cobradores de otros subadmins).
+    let subadminManagedUserIds: string[] | null = null;
+    let loanOwnerFilter: Record<string, any> = {};
+    if (userRole === UserRole.MANAGER) {
+      loanOwnerFilter = { managerId: userId };
+    } else if (userRole === UserRole.SUBADMIN) {
+      subadminManagedUserIds = await this.getManagedUserIds(userId);
+      loanOwnerFilter = { managerId: { in: subadminManagedUserIds } };
+    }
+
     const client = await this.prisma.client.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -256,7 +383,7 @@ export class ClientsService {
         loans: {
           where: {
             deletedAt: null,
-            ...(userRole === UserRole.MANAGER ? { managerId: userId } : {}),
+            ...loanOwnerFilter,
           },
           select: {
             id: true,
@@ -277,7 +404,7 @@ export class ClientsService {
             loans: {
               where: {
                 deletedAt: null,
-                ...(userRole === UserRole.MANAGER ? { managerId: userId } : {}),
+                ...loanOwnerFilter,
               },
             },
             transactions: true,
@@ -300,7 +427,8 @@ export class ClientsService {
         throw new ForbiddenException('No tiene acceso a este cliente');
       }
     } else if (userRole === UserRole.SUBADMIN) {
-      const managedUserIds = await this.getManagedUserIds(userId);
+      const managedUserIds =
+        subadminManagedUserIds ?? (await this.getManagedUserIds(userId));
       const isManagedBySubordinate = client.managers.some(
         (manager: ClientManager) =>
           managedUserIds.includes(manager.userId) && !manager.deletedAt,
@@ -432,10 +560,12 @@ export class ClientsService {
       );
     }
 
-    // Eliminar la relación client-manager y liberar cuota del manager
+    // Baja lógica de la relación client-manager y liberar cuota del manager.
+    // Nunca borrado físico: los datos se conservan para auditoría y análisis.
     await this.prisma.$transaction([
-      this.prisma.clientManager.delete({
+      this.prisma.clientManager.update({
         where: { id: clientManager.id },
+        data: { deletedAt: new Date() },
       }),
       this.prisma.user.update({
         where: { id: userId },
@@ -447,7 +577,7 @@ export class ClientsService {
       }),
     ]);
 
-    // Solo eliminar el cliente si no queda ningún otro manager asignado
+    // Solo dar de baja el cliente si no queda ningún otro manager asignado
     const remainingManagers = await this.prisma.clientManager.count({
       where: {
         clientId: id,
@@ -456,8 +586,9 @@ export class ClientsService {
     });
 
     if (remainingManagers === 0) {
-      await this.prisma.client.delete({
+      await this.prisma.client.update({
         where: { id },
+        data: { deletedAt: new Date() },
       });
       return { message: 'Cliente eliminado exitosamente' };
     }

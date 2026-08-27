@@ -22,6 +22,8 @@ import { CollectionRoutesModule } from './collection-routes/collection-routes.mo
 import { CollectorWalletModule } from './collector-wallet/collector-wallet.module';
 import { SafeModule } from './safe/safe.module';
 import { BlacklistModule } from './blacklist/blacklist.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ClientLossesModule } from './client-losses/client-losses.module';
 import { RabbitMQModule } from './rabbitmq/rabbitmq.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { HttpLoggingInterceptor } from './common/interceptors/http-logging.interceptor';
@@ -60,6 +62,8 @@ import configuration from './config/configuration';
     CollectorWalletModule,
     SafeModule,
     BlacklistModule,
+    NotificationsModule,
+    ClientLossesModule,
     RabbitMQModule,
   ],
   controllers: [AppController],
