@@ -10,7 +10,7 @@ import { UserRole, LoanStatus } from 'src/common/enums';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
 import { DateUtil } from '../common/utils';
-import { ClientManager, NotificationType } from '@prisma/client';
+import { ClientManager, NotificationType, Prisma } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -50,14 +50,21 @@ export class ClientsService {
       throw new NotFoundException('Manager not found');
     }
 
-    // Rechazar clientes en la blacklist (dados de baja por pérdida, etc.)
-    if (createClientDto.dni) {
+    // Rechazar clientes en la blacklist activa (dados de baja por pérdida, etc.).
+    // Se veta por DNI y/o CUIT; las entradas dadas de baja lógica no bloquean.
+    if (createClientDto.dni || createClientDto.cuit) {
+      const orMatch: Prisma.BlacklistedClientWhereInput[] = [];
+      if (createClientDto.dni) orMatch.push({ dni: createClientDto.dni });
+      if (createClientDto.cuit) orMatch.push({ cuit: createClientDto.cuit });
       const blacklisted = await this.prisma.blacklistedClient.findFirst({
-        where: { dni: createClientDto.dni },
+        where: { deletedAt: null, OR: orMatch },
       });
       if (blacklisted) {
+        const label = blacklisted.dni
+          ? `El DNI ${blacklisted.dni}`
+          : `El CUIT ${blacklisted.cuit}`;
         throw new BadRequestException(
-          `El DNI ${createClientDto.dni} está en la lista negra: ${blacklisted.reason}`,
+          `${label} está en la lista negra: ${blacklisted.reason}`,
         );
       }
     }

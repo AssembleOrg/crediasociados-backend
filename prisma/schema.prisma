@@ -669,14 +669,20 @@ model Notification {
 }
 
 model BlacklistedClient {
-  id        String   @id @default(cuid())
-  dni       String
-  fullName  String
-  reason    String
-  createdBy String // userId del subadmin que lo agrego
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(cuid())
+  dni          String? // puede vetarse por DNI y/o CUIT
+  cuit         String?
+  fullName     String
+  reason       String
+  createdBy    String // userId de quien lo agregó
+  clientId     String? // cliente que originó el veto (trazabilidad)
+  clientLossId String? // pérdida que lo generó, si vino de una baja
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime? // baja lógica: fuera de la lista pero recuperable
 
   @@index([dni])
+  @@index([cuit])
+  @@index([deletedAt])
   @@map("blacklisted_clients")
 }

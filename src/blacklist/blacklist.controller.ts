@@ -42,15 +42,24 @@ export class BlacklistController {
   @ApiResponse({ status: 201, description: 'Cliente agregado a lista negra' })
   @ApiResponse({ status: 400, description: 'DNI ya existe en la lista negra' })
   async add(
-    @Body() body: { dni: string; fullName: string; reason: string },
+    @Body()
+    body: {
+      dni?: string;
+      cuit?: string;
+      fullName: string;
+      reason: string;
+      clientId?: string;
+    },
     @Request() req,
   ) {
-    return this.blacklistService.addToBlacklist(
-      body.dni,
-      body.fullName,
-      body.reason,
-      req.user.id,
-    );
+    return this.blacklistService.addToBlacklist({
+      dni: body.dni,
+      cuit: body.cuit,
+      fullName: body.fullName,
+      reason: body.reason,
+      userId: req.user.id,
+      clientId: body.clientId,
+    });
   }
 
   @Delete(':id')
@@ -69,10 +78,10 @@ export class BlacklistController {
     UserRole.ADMIN,
     UserRole.SUPERADMIN,
   )
-  @ApiOperation({ summary: 'Verificar si un DNI está en la lista negra' })
+  @ApiOperation({ summary: 'Verificar si un DNI y/o CUIT está en la lista negra' })
   @ApiResponse({ status: 200, description: 'Resultado del chequeo' })
-  async check(@Query('dni') dni: string) {
-    const entry = await this.blacklistService.checkDni(dni);
+  async check(@Query('dni') dni?: string, @Query('cuit') cuit?: string) {
+    const entry = await this.blacklistService.check(dni, cuit);
     return {
       isBlacklisted: !!entry,
       entry: entry || null,

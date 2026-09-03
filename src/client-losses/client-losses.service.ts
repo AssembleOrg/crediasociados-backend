@@ -56,7 +56,7 @@ export class ClientLossesService {
 
     const client = await this.prisma.client.findFirst({
       where: { id: clientId, deletedAt: null },
-      select: { id: true, fullName: true, dni: true },
+      select: { id: true, fullName: true, dni: true, cuit: true },
     });
     if (!client) {
       throw new NotFoundException('Cliente no encontrado');
@@ -132,26 +132,9 @@ export class ClientLossesService {
         });
       }
 
-      // Blacklist por DNI (si no está ya)
-      let blacklistId: string | null = null;
-      if (client.dni) {
-        const existing = await tx.blacklistedClient.findFirst({
-          where: { dni: client.dni },
-        });
-        if (!existing) {
-          const entry = await tx.blacklistedClient.create({
-            data: {
-              dni: client.dni,
-              fullName: client.fullName,
-              reason: `Pérdida — baja por cobrador ${manager.fullName}`,
-              createdBy: managerId,
-            },
-          });
-          blacklistId = entry.id;
-        }
-      }
-
-      return tx.clientLoss.create({
+      // Crear primero el registro de pérdida para poder trazar la entrada de
+      // blacklist con clientLossId.
+      const createdLoss = await tx.clientLoss.create({
         data: {
           clientId,
           managerId,
@@ -159,9 +142,41 @@ export class ClientLossesService {
           lostAmount: new Prisma.Decimal(lostAmount),
           loansSnapshot: snapshot as unknown as Prisma.InputJsonValue,
           lossAt,
-          blacklistId,
         },
       });
+
+      // Blacklist por DNI y/o CUIT (si no está ya en la lista activa)
+      let blacklistId: string | null = null;
+      if (client.dni || client.cuit) {
+        const orMatch: Prisma.BlacklistedClientWhereInput[] = [];
+        if (client.dni) orMatch.push({ dni: client.dni });
+        if (client.cuit) orMatch.push({ cuit: client.cuit });
+        const existing = await tx.blacklistedClient.findFirst({
+          where: { deletedAt: null, OR: orMatch },
+        });
+        if (!existing) {
+          const entry = await tx.blacklistedClient.create({
+            data: {
+              dni: client.dni ?? null,
+              cuit: client.cuit ?? null,
+              fullName: client.fullName,
+              reason: `Pérdida — baja por cobrador ${manager.fullName}`,
+              createdBy: managerId,
+              clientId,
+              clientLossId: createdLoss.id,
+            },
+          });
+          blacklistId = entry.id;
+        }
+      }
+
+      if (blacklistId) {
+        return tx.clientLoss.update({
+          where: { id: createdLoss.id },
+          data: { blacklistId },
+        });
+      }
+      return createdLoss;
     });
 
     // Notificar al subadmin del cobrador (fuera de la transacción)
@@ -291,10 +306,11 @@ export class ClientLossesService {
         });
       }
 
-      // Sacar de la blacklist la entrada creada por esta pérdida
+      // Sacar de la blacklist la entrada creada por esta pérdida (baja lógica)
       if (loss.blacklistId) {
-        await tx.blacklistedClient.deleteMany({
-          where: { id: loss.blacklistId },
+        await tx.blacklistedClient.updateMany({
+          where: { id: loss.blacklistId, deletedAt: null },
+          data: { deletedAt: new Date() },
         });
       }
 
