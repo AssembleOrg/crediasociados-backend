@@ -23,6 +23,10 @@ type AuthedSocket = Socket & { data: { userId?: string } };
   // (que solo reenvía /api/*) alcance el handshake de socket.io con la
   // cookie de sesión (SameSite=lax exige same-origin en el browser).
   path: '/api/v1/socket.io',
+  // El frontend llega sin trailing slash (Next 308-redirige /api/socket.io/
+  // a /api/socket.io); sin esto engine.io solo matchea el path con "/" final
+  // y el handshake caía al router HTTP de Nest como 404.
+  addTrailingSlash: false,
   cors: {
     origin: true,
     credentials: true,
