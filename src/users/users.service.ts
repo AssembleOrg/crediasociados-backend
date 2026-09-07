@@ -817,7 +817,7 @@ export class UsersService {
         select: {
           id: true,
           managerId: true,
-          amount: true,
+          originalAmount: true,
           status: true,
           subLoans: {
             where: { deletedAt: null },
@@ -834,7 +834,8 @@ export class UsersService {
 
     // Agrupar por manager
     const managerClientsMap = new Map<string, { count: number; clients: Array<{ createdAt: Date }> }>();
-    // totalAmount/count = histórico. dineroPrestado/dineroEnCalle/activeLoans = actualidad
+    // totalAmount = capital prestado histórico (originalAmount; loan.amount incluye interés).
+    // dineroPrestado/dineroEnCalle/activeLoans = actualidad
     // (misma lógica que collector-wallet getManagerDetail: solo cuotas no pagadas).
     const managerLoansMap = new Map<
       string,
@@ -873,7 +874,7 @@ export class UsersService {
       const entry = managerLoansMap.get(loan.managerId);
       if (entry) {
         entry.count++;
-        entry.totalAmount += Number(loan.amount);
+        entry.totalAmount += Number(loan.originalAmount);
         let capital = 0;
         let pending = 0;
         for (const sl of loan.subLoans) {
