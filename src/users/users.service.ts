@@ -819,17 +819,43 @@ export class UsersService {
           managerId: true,
           amount: true,
           status: true,
+          subLoans: {
+            where: { deletedAt: null },
+            select: {
+              amount: true,
+              totalAmount: true,
+              paidAmount: true,
+              status: true,
+            },
+          },
         },
       }),
     ]);
 
     // Agrupar por manager
     const managerClientsMap = new Map<string, { count: number; clients: Array<{ createdAt: Date }> }>();
-    const managerLoansMap = new Map<string, { count: number; totalAmount: number }>();
+    // totalAmount/count = histórico. dineroPrestado/dineroEnCalle/activeLoans = actualidad
+    // (misma lógica que collector-wallet getManagerDetail: solo cuotas no pagadas).
+    const managerLoansMap = new Map<
+      string,
+      {
+        count: number;
+        totalAmount: number;
+        activeLoans: number;
+        dineroPrestado: number;
+        dineroEnCalle: number;
+      }
+    >();
 
     for (const id of managerIds) {
       managerClientsMap.set(id, { count: 0, clients: [] });
-      managerLoansMap.set(id, { count: 0, totalAmount: 0 });
+      managerLoansMap.set(id, {
+        count: 0,
+        totalAmount: 0,
+        activeLoans: 0,
+        dineroPrestado: 0,
+        dineroEnCalle: 0,
+      });
     }
 
     for (const client of clientsByManager) {
@@ -848,6 +874,16 @@ export class UsersService {
       if (entry) {
         entry.count++;
         entry.totalAmount += Number(loan.amount);
+        let capital = 0;
+        let pending = 0;
+        for (const sl of loan.subLoans) {
+          if (sl.status === 'PAID') continue;
+          capital += Number(sl.amount);
+          pending += Math.max(0, Number(sl.totalAmount) - Number(sl.paidAmount));
+        }
+        if (capital > 0) entry.activeLoans++;
+        entry.dineroPrestado += capital;
+        entry.dineroEnCalle += pending;
       }
     }
 
@@ -861,6 +897,9 @@ export class UsersService {
         totalClients: clientsEntry.count,
         totalLoans: loansEntry.count,
         totalAmount: loansEntry.totalAmount,
+        activeLoans: loansEntry.activeLoans,
+        dineroPrestado: Number(loansEntry.dineroPrestado.toFixed(2)),
+        dineroEnCalle: Number(loansEntry.dineroEnCalle.toFixed(2)),
         clients: clientsEntry.clients,
       };
     });

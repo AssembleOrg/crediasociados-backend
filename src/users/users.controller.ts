@@ -252,7 +252,8 @@ export class UsersController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Obtener resumen de todos los managers del subadmin en una sola llamada',
-    description: 'Retorna totalClients, totalLoans, totalAmount y clientes (con createdAt) para cada manager. Reemplaza N llamadas a clients/chart + loans/chart.',
+    description:
+      'Retorna totalClients, totalLoans, totalAmount (histórico), activeLoans, dineroPrestado (capital en calle), dineroEnCalle (capital + interés pendiente) y clientes (con createdAt) para cada manager. Reemplaza N llamadas a clients/chart + loans/chart.',
   })
   @ApiResponse({ status: 200, description: 'Resumen de managers obtenido exitosamente' })
   async getSubadminManagersSummary(@Req() req: any) {
