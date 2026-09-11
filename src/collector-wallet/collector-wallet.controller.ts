@@ -18,6 +18,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { CollectorWalletService } from './collector-wallet.service';
+import { CollectorReportPdfService } from './collector-report-pdf.service';
 import {
   WithdrawDto,
   WithdrawManagerDto,
@@ -43,7 +44,10 @@ import { DateUtil } from '../common/utils/date.util';
 @Controller('collector-wallet')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CollectorWalletController {
-  constructor(private readonly collectorWalletService: CollectorWalletService) {}
+  constructor(
+    private readonly collectorWalletService: CollectorWalletService,
+    private readonly collectorReportPdfService: CollectorReportPdfService,
+  ) {}
 
   @Get('balance')
   @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
@@ -292,11 +296,68 @@ export class CollectorWalletController {
     @CurrentUser() currentUser: any,
     @Query() query: PeriodReportDto,
   ) {
+    const { startDate, endDate, managerIdToPass } =
+      await this.resolvePeriodReportTarget(currentUser, query);
+
+    return this.collectorWalletService.getPeriodReport(
+      currentUser.id,
+      startDate,
+      endDate,
+      managerIdToPass,
+    );
+  }
+
+  @Get('period-report/pdf')
+  @Roles(UserRole.MANAGER, UserRole.ADMIN, UserRole.SUBADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Descargar el reporte del período en PDF',
+    description:
+      'Genera el mismo reporte que GET /period-report (mismos filtros de fechas y managerId) ' +
+      'y lo devuelve como PDF en base64.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'PDF generado exitosamente',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        pdfBase64: { type: 'string' },
+        filename: { type: 'string' },
+      },
+    },
+  })
+  async getPeriodReportPdf(
+    @CurrentUser() currentUser: any,
+    @Query() query: PeriodReportDto,
+  ) {
+    const { startDate, endDate, managerIdToPass } =
+      await this.resolvePeriodReportTarget(currentUser, query);
+
+    const report = await this.collectorWalletService.getPeriodReport(
+      currentUser.id,
+      startDate,
+      endDate,
+      managerIdToPass,
+    );
+
+    const { pdfBase64, filename } =
+      await this.collectorReportPdfService.generatePeriodReportPdf(report);
+
+    return { success: true, pdfBase64, filename };
+  }
+
+  /**
+   * Parsea fechas y valida permisos sobre managerId para el reporte de período.
+   * Compartido por la versión JSON y la versión PDF.
+   */
+  private async resolvePeriodReportTarget(
+    currentUser: any,
+    query: PeriodReportDto,
+  ): Promise<{ startDate?: Date; endDate?: Date; managerIdToPass?: string }> {
     const startDate = query.startDate ? DateUtil.parseToDate(query.startDate) : undefined;
     const endDate = query.endDate ? DateUtil.parseToDate(query.endDate) : undefined;
 
-    // Determinar el usuario objetivo
-    let targetUserId = currentUser.id;
     let managerIdToPass: string | undefined;
 
     if (query.managerId) {
@@ -322,16 +383,10 @@ export class CollectorWalletController {
         );
       }
 
-      targetUserId = query.managerId;
       managerIdToPass = query.managerId;
     }
 
-    return this.collectorWalletService.getPeriodReport(
-      currentUser.id,
-      startDate,
-      endDate,
-      managerIdToPass,
-    );
+    return { startDate, endDate, managerIdToPass };
   }
 
   @Get('daily-summary')
