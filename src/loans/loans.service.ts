@@ -549,6 +549,19 @@ export class LoansService {
         subLoans: {
           where: { deletedAt: null },
           orderBy: { paymentNumber: 'asc' },
+          // Pagos de cada cuota: el timeline los usa para ofrecer "Resetear"
+          // cuando el último pago se cargó en las últimas 24 horas.
+          include: {
+            payments: {
+              select: {
+                id: true,
+                amount: true,
+                paymentDate: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
         },
         transactions: {
           where: { deletedAt: null },
