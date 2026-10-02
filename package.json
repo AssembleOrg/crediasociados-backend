@@ -35,7 +35,8 @@
     "create-admin": "ts-node scripts/create-admin-account.ts",
     "clean-admin": "ts-node scripts/clean-admin-data.ts",
     "update-reset-transactions": "ts-node scripts/update-reset-transactions.ts",
-    "recalculate-balances": "ts-node scripts/recalculate-collector-wallet-balances.ts"
+    "recalculate-balances": "ts-node scripts/recalculate-collector-wallet-balances.ts",
+    "dev:fixtures": "ts-node --transpile-only -r tsconfig-paths/register scripts/dev-fixtures.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
