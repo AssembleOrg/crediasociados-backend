@@ -648,6 +648,7 @@ enum NotificationType {
   CLIENT_LOSS
   CLIENT_LOSS_REVERTED
   LOAN_FINISHED_EARLY
+  SYSTEM_NOTICE // Aviso genérico (correcciones manuales, comunicados): solo title + message
 }
 
 model Notification {
