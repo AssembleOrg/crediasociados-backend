@@ -258,10 +258,13 @@ export class DailyClosureService {
         },
       });
     } else {
-      // Para SUBADMIN+, buscar cualquier cierre en esa fecha
+      // SUBADMIN: solo cierres de sus propios managers. ADMIN/SUPERADMIN: global.
       closure = await this.prisma.dailyClosure.findFirst({
         where: {
           closureDate: parsedDate,
+          ...(userRole === UserRole.SUBADMIN
+            ? { user: { createdById: userId } }
+            : {}),
         },
         include: {
           expenses: true,
@@ -319,15 +322,10 @@ export class DailyClosureService {
     };
 
     if (userRole === UserRole.MANAGER) {
+      // Pertenencia por loan.managerId (no por client.managers): un cliente
+      // compartido no debe exponer cuotas de préstamos de otros managers.
       whereClause.loan = {
-        client: {
-          managers: {
-            some: {
-              userId,
-              deletedAt: null,
-            },
-          },
-        },
+        managerId: userId,
         deletedAt: null,
       };
     } else if (userRole === UserRole.SUBADMIN) {

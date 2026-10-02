@@ -625,21 +625,12 @@ export class LoansService {
       deletedAt: null,
     };
 
-    // Filtros de acceso por rol
-    if (userRole === UserRole.MANAGER) {
-      // MANAGER: solo sus préstamos
-      whereClause.managerId = userId;
-    } else if (userRole === UserRole.SUBADMIN) {
-      // SUBADMIN: préstamos de sus managers
-      const managedUserIds = await this.getManagedUserIds(userId);
-      whereClause.managerId = { in: managedUserIds };
-    }
-    // ADMIN y SUPERADMIN ven todos los préstamos (no aplican filtro base)
-
-    // Aplicar filtros adicionales
-    if (filters.managerId) {
-      whereClause.managerId = filters.managerId;
-    }
+    // Filtros de acceso por rol (el filtro managerId nunca amplía este alcance)
+    whereClause.managerId = await this.resolveLoanManagerScope(
+      userId,
+      userRole,
+      filters.managerId,
+    );
 
     if (filters.clientId) {
       whereClause.clientId = filters.clientId;
@@ -787,18 +778,12 @@ export class LoansService {
       deletedAt: null,
     };
 
-    // Filtros de acceso por rol
-    if (userRole === UserRole.MANAGER) {
-      whereClause.managerId = userId;
-    } else if (userRole === UserRole.SUBADMIN) {
-      const managedUserIds = await this.getManagedUserIds(userId);
-      whereClause.managerId = { in: managedUserIds };
-    }
-
-    // Aplicar filtros adicionales
-    if (filters.managerId) {
-      whereClause.managerId = filters.managerId;
-    }
+    // Filtros de acceso por rol (el filtro managerId nunca amplía este alcance)
+    whereClause.managerId = await this.resolveLoanManagerScope(
+      userId,
+      userRole,
+      filters.managerId,
+    );
 
     if (filters.clientId) {
       whereClause.clientId = filters.clientId;
@@ -931,6 +916,42 @@ export class LoansService {
         },
       };
     });
+  }
+
+  /**
+   * Devuelve el filtro Prisma de managerId según rol, intersectado con el
+   * managerId pedido por query. Un MANAGER solo puede filtrarse a sí mismo y
+   * un SUBADMIN solo a sus managers; fuera de alcance => 403.
+   * ADMIN/SUPERADMIN: sin filtro base (undefined) o el managerId pedido.
+   */
+  private async resolveLoanManagerScope(
+    userId: string,
+    userRole: UserRole,
+    requestedManagerId?: string,
+  ): Promise<string | { in: string[] } | undefined> {
+    if (userRole === UserRole.MANAGER) {
+      if (requestedManagerId && requestedManagerId !== userId) {
+        throw new ForbiddenException('No tiene acceso a préstamos de otro manager');
+      }
+      return userId;
+    }
+
+    if (userRole === UserRole.SUBADMIN) {
+      const managedUserIds = await this.getManagedUserIds(userId);
+      if (requestedManagerId) {
+        if (!managedUserIds.includes(requestedManagerId)) {
+          throw new ForbiddenException('No tiene acceso a este manager');
+        }
+        return requestedManagerId;
+      }
+      return { in: managedUserIds };
+    }
+
+    if (userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN) {
+      return requestedManagerId || undefined;
+    }
+
+    throw new ForbiddenException('Acceso denegado');
   }
 
   private async getManagedUserIds(userId: string): Promise<string[]> {

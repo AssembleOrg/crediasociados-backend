@@ -7,7 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
-import { RegisterPaymentDto, BulkPaymentDto } from './dto';
+import { RegisterPaymentDto, BulkPaymentDto, EditPaymentDto } from './dto';
 import { NotificationType, Prisma, SubLoanStatus, UserRole } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { DateUtil } from '../common/utils';
@@ -21,6 +21,38 @@ export class PaymentsService {
     private collectorWalletService: CollectorWalletService,
     private notificationsService: NotificationsService,
   ) {}
+
+  /**
+   * Verifica que el usuario pueda operar sobre un préstamo del manager indicado.
+   * - SUPERADMIN / ADMIN: acceso global.
+   * - MANAGER: solo sus propios préstamos (loan.managerId).
+   * - SUBADMIN: solo préstamos de managers que creó.
+   * Cualquier otro caso se deniega.
+   */
+  private async assertLoanAccess(
+    loanManagerId: string | null,
+    userId: string,
+    userRole: UserRole,
+  ): Promise<void> {
+    if (userRole === UserRole.SUPERADMIN || userRole === UserRole.ADMIN) {
+      return;
+    }
+
+    if (userRole === UserRole.MANAGER) {
+      if (loanManagerId && loanManagerId === userId) return;
+      throw new ForbiddenException('No tienes acceso a este préstamo');
+    }
+
+    if (userRole === UserRole.SUBADMIN && loanManagerId) {
+      const manager = await this.prisma.user.findFirst({
+        where: { id: loanManagerId, createdById: userId },
+        select: { id: true },
+      });
+      if (manager) return;
+    }
+
+    throw new ForbiddenException('No tienes acceso a este préstamo');
+  }
 
   /**
    * Registrar un pago para un SubLoan con lógica de distribución de excedentes
@@ -70,12 +102,8 @@ export class PaymentsService {
       throw new BadRequestException('SubLoan eliminado');
     }
 
-    // Validar que el usuario tenga acceso al préstamo
-    if (userRole === UserRole.MANAGER) {
-      if (subLoan.loan.managerId !== userId) {
-        throw new ForbiddenException('No tienes acceso a este préstamo');
-      }
-    }
+    // Validar que el usuario tenga acceso al préstamo (MANAGER dueño o SUBADMIN creador)
+    await this.assertLoanAccess(subLoan.loan.managerId, userId, userRole);
 
     // Verificar si está pagado y si podemos modificar el pago del mismo día
     let shouldRevertLastPayment = false;
@@ -1022,12 +1050,8 @@ export class PaymentsService {
       throw new NotFoundException('SubLoan no encontrado');
     }
 
-    // Validar acceso
-    if (userRole === UserRole.MANAGER) {
-      if (subLoan.loan.managerId !== userId) {
-        throw new ForbiddenException('No tienes acceso a este préstamo');
-      }
-    }
+    // Validar que el usuario tenga acceso al préstamo (MANAGER dueño o SUBADMIN creador)
+    await this.assertLoanAccess(subLoan.loan.managerId, userId, userRole);
 
     return {
       subLoan: {
@@ -1159,12 +1183,8 @@ export class PaymentsService {
       throw new BadRequestException('SubLoan eliminado');
     }
 
-    // Validar acceso
-    if (userRole === UserRole.MANAGER) {
-      if (subLoan.loan.managerId !== userId) {
-        throw new ForbiddenException('No tienes acceso a este préstamo');
-      }
-    }
+    // Validar que el usuario tenga acceso al préstamo (MANAGER dueño o SUBADMIN creador)
+    await this.assertLoanAccess(subLoan.loan.managerId, userId, userRole);
 
     // Si no hay payments, puede ser una cuota pagada por adelantado.
     // En ese caso, buscar el payment origen en paymentHistory y redirigir el reset al subLoan que sí tiene el payment.
@@ -1588,7 +1608,7 @@ export class PaymentsService {
     userId: string,
     userRole: UserRole,
     subLoanId: string,
-    registerPaymentDto: Omit<RegisterPaymentDto, 'subLoanId'>,
+    registerPaymentDto: EditPaymentDto,
   ): Promise<any> {
     const { amount, currency, paymentDate, description } = registerPaymentDto;
 
@@ -1649,12 +1669,8 @@ export class PaymentsService {
       );
     }
 
-    // Validar que el usuario tenga acceso
-    if (userRole === UserRole.MANAGER) {
-      if (subLoan.loan.managerId !== userId) {
-        throw new ForbiddenException('No tienes acceso a este préstamo');
-      }
-    }
+    // Validar que el usuario tenga acceso al préstamo (MANAGER dueño o SUBADMIN creador)
+    await this.assertLoanAccess(subLoan.loan.managerId, userId, userRole);
 
     // Validar moneda
     if (subLoan.loan.currency !== currency) {

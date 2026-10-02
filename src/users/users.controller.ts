@@ -69,8 +69,9 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Users retrieved successfully' })
   async findAll(
     @Query() paginationDto: PaginationDto,
+    @CurrentUser() currentUser: any,
   ): Promise<PaginatedResponse<UserResponseDto>> {
-    return this.usersService.findAll(paginationDto);
+    return this.usersService.findAll(paginationDto, currentUser);
   }
 
   @Get(':id')
@@ -120,8 +121,11 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: 200, description: 'User deleted successfully' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async remove(@Param('id') id: string): Promise<void> {
-    return this.usersService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ): Promise<void> {
+    return this.usersService.remove(id, currentUser);
   }
 
   @Get('created')
@@ -152,8 +156,11 @@ export class UsersController {
     description: 'Created users retrieved successfully with quota and wallet information',
     type: [UserResponseDto],
   })
-  async getCreatedUsers(@Param('id') id: string): Promise<UserResponseDto[]> {
-    return this.usersService.getCreatedUsers(id);
+  async getCreatedUsers(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ): Promise<UserResponseDto[]> {
+    return this.usersService.getCreatedUsers(id, currentUser);
   }
 
   @Get(':id/hierarchy')
@@ -166,11 +173,14 @@ export class UsersController {
     status: 200,
     description: 'User hierarchy retrieved successfully',
   })
-  async getUserHierarchy(@Param('id') id: string): Promise<{
+  async getUserHierarchy(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+  ): Promise<{
     createdBy: UserResponseDto | null;
     createdUsers: UserResponseDto[];
   }> {
-    return this.usersService.getUserHierarchy(id);
+    return this.usersService.getUserHierarchy(id, currentUser);
   }
 
   @Get(':managerId/clients')

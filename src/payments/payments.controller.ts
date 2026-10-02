@@ -17,7 +17,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
-import { RegisterPaymentDto, BulkPaymentDto } from './dto';
+import { RegisterPaymentDto, BulkPaymentDto, EditPaymentDto } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -174,7 +174,7 @@ export class PaymentsController {
   async editPayment(
     @Request() req: any,
     @Param('subLoanId') subLoanId: string,
-    @Body() editPaymentDto: Omit<RegisterPaymentDto, 'subLoanId'>,
+    @Body() editPaymentDto: EditPaymentDto,
   ) {
     return this.paymentsService.editPayment(
       req.user.id,

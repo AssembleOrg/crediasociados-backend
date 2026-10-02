@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { CreateUserDto, UpdateUserDto, UserResponseDto } from './dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/interfaces/pagination.interface';
@@ -132,13 +133,23 @@ export class UsersService {
 
   async findAll(
     paginationDto: PaginationDto,
+    currentUser: any,
   ): Promise<PaginatedResponse<UserResponseDto>> {
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
+    // SUBADMIN solo ve su propio usuario y los managers que creó
+    const where: Prisma.UserWhereInput =
+      currentUser?.role === UserRole.SUBADMIN
+        ? {
+            deletedAt: null,
+            OR: [{ id: currentUser.id }, { createdById: currentUser.id }],
+          }
+        : { deletedAt: null };
+
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
-        where: { deletedAt: null },
+        where,
         skip,
         take: limit,
         select: {
@@ -154,7 +165,7 @@ export class UsersService {
         },
       }),
       this.prisma.user.count({
-        where: { deletedAt: null },
+        where,
       }),
     ]);
 
@@ -179,6 +190,11 @@ export class UsersService {
       throw new ForbiddenException(
         'Los MANAGER solo pueden acceder a su propio perfil',
       );
+    }
+
+    // SUBADMIN solo puede ver su propio perfil o managers que creó
+    if (currentUser && currentUser.role === UserRole.SUBADMIN) {
+      await this.assertCanViewUser(id, currentUser);
     }
 
     const user = await this.prisma.user.findFirst({
@@ -242,6 +258,24 @@ export class UsersService {
 
     if (!existingUser) {
       throw new NotFoundException('User not found');
+    }
+
+    const isSelf = existingUser.id === currentUser.id;
+    if (isSelf) {
+      // Un usuario puede editar sus datos básicos, pero no elevar sus
+      // privilegios ni modificar su propia cuota o comisión.
+      if (
+        updateUserDto.role !== undefined ||
+        updateUserDto.clientQuota !== undefined ||
+        updateUserDto.commission !== undefined
+      ) {
+        throw new ForbiddenException(
+          'No puede modificar su propio rol, cuota o comisión',
+        );
+      }
+    } else {
+      // Solo sobre usuarios de rango inferior que estén bajo su jerarquía
+      this.assertCanManageUser(existingUser, currentUser);
     }
 
     // Check if user is trying to update their own role or a higher role
@@ -332,7 +366,7 @@ export class UsersService {
     return response;
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, currentUser: any): Promise<void> {
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
     });
@@ -340,6 +374,11 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    if (user.id === currentUser.id) {
+      throw new ForbiddenException('No puede eliminar su propio usuario');
+    }
+    this.assertCanManageUser(user, currentUser);
 
     await this.prisma.user.delete({
       where: { id },
@@ -428,7 +467,14 @@ export class UsersService {
     };
   }
 
-  async getCreatedUsers(userId: string): Promise<UserResponseDto[]> {
+  async getCreatedUsers(
+    userId: string,
+    currentUser?: any,
+  ): Promise<UserResponseDto[]> {
+    if (currentUser) {
+      await this.assertCanViewUser(userId, currentUser);
+    }
+
     const createdUsers = await this.prisma.user.findMany({
       where: {
         createdById: userId,
@@ -500,10 +546,15 @@ export class UsersService {
     return usersWithRecalculatedBalances;
   }
 
-  async getUserHierarchy(userId: string): Promise<{
+  async getUserHierarchy(
+    userId: string,
+    currentUser: any,
+  ): Promise<{
     createdBy: UserResponseDto | null;
     createdUsers: UserResponseDto[];
   }> {
+    await this.assertCanViewUser(userId, currentUser);
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -974,7 +1025,8 @@ export class UsersService {
         cuit: true,
         createdAt: true,
         loans: {
-          where: { deletedAt: null },
+          // Solo préstamos de este manager (cliente puede ser compartido)
+          where: { deletedAt: null, managerId },
           select: {
             id: true,
             amount: true,
@@ -1279,6 +1331,73 @@ export class UsersService {
         },
       };
     });
+  }
+
+  /**
+   * Autoriza editar/eliminar a otro usuario.
+   * - SUPERADMIN: cualquier usuario que no sea SUPERADMIN.
+   * - ADMIN: solo SUBADMIN y MANAGER.
+   * - SUBADMIN: solo MANAGER creados por él.
+   * - Resto: denegado.
+   */
+  private assertCanManageUser(
+    target: { id: string; role: any; createdById: string | null },
+    currentUser: any,
+  ): void {
+    const targetRole = convertPrismaUserRole(target.role);
+
+    switch (currentUser?.role) {
+      case UserRole.SUPERADMIN:
+        if (targetRole !== UserRole.SUPERADMIN) return;
+        break;
+      case UserRole.ADMIN:
+        if (
+          targetRole === UserRole.SUBADMIN ||
+          targetRole === UserRole.MANAGER
+        ) {
+          return;
+        }
+        break;
+      case UserRole.SUBADMIN:
+        if (
+          targetRole === UserRole.MANAGER &&
+          target.createdById === currentUser.id
+        ) {
+          return;
+        }
+        break;
+    }
+
+    throw new ForbiddenException('No tiene permisos sobre este usuario');
+  }
+
+  /**
+   * Autoriza consultar datos de otro usuario (perfil, usuarios creados, jerarquía).
+   * SUPERADMIN y ADMIN tienen alcance global; SUBADMIN solo a sí mismo y a
+   * los managers que creó; MANAGER solo a sí mismo.
+   */
+  private async assertCanViewUser(
+    targetId: string,
+    currentUser: any,
+  ): Promise<void> {
+    if (
+      currentUser?.role === UserRole.SUPERADMIN ||
+      currentUser?.role === UserRole.ADMIN
+    ) {
+      return;
+    }
+
+    if (targetId === currentUser?.id) return;
+
+    if (currentUser?.role === UserRole.SUBADMIN) {
+      const owned = await this.prisma.user.findFirst({
+        where: { id: targetId, createdById: currentUser.id },
+        select: { id: true },
+      });
+      if (owned) return;
+    }
+
+    throw new ForbiddenException('No tiene permisos sobre este usuario');
   }
 
   private async validateManagerAccess(

@@ -78,9 +78,11 @@ export class ClientsService {
           deletedAt: null,
         },
         include: {
+          // Solo userId: nunca incluir el User completo (password hash, email,
+          // comisión de managers de otros subadmins).
           managers: {
             where: { deletedAt: null },
-            include: { user: true },
+            select: { userId: true, deletedAt: true },
           },
         },
       });
@@ -93,9 +95,11 @@ export class ClientsService {
           deletedAt: null,
         },
         include: {
+          // Solo userId: nunca incluir el User completo (password hash, email,
+          // comisión de managers de otros subadmins).
           managers: {
             where: { deletedAt: null },
-            include: { user: true },
+            select: { userId: true, deletedAt: true },
           },
         },
       });
@@ -159,8 +163,10 @@ export class ClientsService {
         true,
       );
 
+      // No devolver los vínculos con otros managers (pueden ser de otro subadmin)
+      const { managers: _otherManagers, ...clientData } = existingClient;
       return {
-        ...existingClient,
+        ...clientData,
         isExistingClient: true,
         message: 'Cliente existente asignado exitosamente',
       };
@@ -1119,9 +1125,12 @@ export class ClientsService {
             deletedAt: null,
           },
         },
+        // Pertenencia por loan.managerId: un cliente compartido no debe
+        // exponer préstamos de managers de otros subadmins.
         loans: {
           some: {
             deletedAt: null,
+            managerId,
             status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] },
           },
         },
@@ -1130,6 +1139,7 @@ export class ClientsService {
         loans: {
           where: {
             deletedAt: null,
+            managerId,
             status: { in: ['ACTIVE', 'APPROVED', 'PENDING'] },
           },
           select: {

@@ -201,7 +201,9 @@ export class CollectorWalletService {
   }): Promise<void> {
     const { userId, amount, description, subLoanId, transaction } = params;
 
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -274,7 +276,9 @@ export class CollectorWalletService {
     amount: number,
     description: string,
   ): Promise<any> {
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -419,7 +423,9 @@ export class CollectorWalletService {
     amount: number,
     description: string,
   ): Promise<any> {
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -597,7 +603,9 @@ export class CollectorWalletService {
   }): Promise<void> {
     const { userId, amount, description, routeId, transaction } = params;
 
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -673,7 +681,9 @@ export class CollectorWalletService {
   }): Promise<void> {
     const { userId, amount, description, loanId, transaction } = params;
 
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -749,7 +759,9 @@ export class CollectorWalletService {
   }): Promise<void> {
     const { userId, amount, description, transaction } = params;
 
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
@@ -822,7 +834,9 @@ export class CollectorWalletService {
     amount: number,
     description: string,
   ): Promise<any> {
-    if (amount <= 0) {
+    // typeof/isFinite: un string (p.ej. "1e-9") pasaría `<= 0` y
+    // concatenaría en `balanceBefore + amount`, corrompiendo el saldo.
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('El monto debe ser mayor a 0');
     }
 
