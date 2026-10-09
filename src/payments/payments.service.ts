@@ -13,6 +13,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { DateUtil } from '../common/utils';
 import { WalletTransactionType, CollectorWalletTransactionType } from '../common/enums';
 
+/** Horas desde la carga dentro de las cuales se pueden eliminar los pagos de una cuota. */
+export const RESET_WINDOW_HOURS = 48;
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -1147,7 +1150,7 @@ export class PaymentsService {
 
   /**
    * Resetear todos los pagos de un SubLoan.
-   * Solo se permite si el último pago fue hace menos de 24 horas.
+   * Solo se permite si todos los pagos se cargaron hace menos de RESET_WINDOW_HOURS (48 hs).
    */
   async resetSubLoanPayments(
     subLoanId: string,
@@ -1216,16 +1219,19 @@ export class PaymentsService {
       );
     }
 
-    // Validar que el último pago no sea mayor a 24 horas
-    // Usar createdAt (cuando se registró) en lugar de paymentDate (fecha del pago)
-    const lastPayment = subLoan.payments[0];
-    const lastPaymentCreatedAt = DateUtil.fromPrismaDate(lastPayment.createdAt);
+    // Todos los pagos de la cuota tienen que haberse cargado en las últimas
+    // RESET_WINDOW_HOURS. Se usa createdAt (cuando se registró), no paymentDate.
+    // Si alguno es más viejo, borrarlo alteraría cajas/wallets de días ya cerrados.
     const now = DateUtil.now();
-    const hoursDiff = now.diff(lastPaymentCreatedAt, 'hours').hours;
+    const oldestHoursDiff = Math.max(
+      ...subLoan.payments.map(
+        (p) => now.diff(DateUtil.fromPrismaDate(p.createdAt), 'hours').hours,
+      ),
+    );
 
-    if (hoursDiff > 24) {
+    if (oldestHoursDiff > RESET_WINDOW_HOURS) {
       throw new BadRequestException(
-        `No se puede resetear: el último pago fue hace ${Math.floor(hoursDiff)} horas. Solo se permiten reseteos de pagos realizados en las últimas 24 horas.`,
+        `No se puede eliminar: la cuota tiene un pago cargado hace ${Math.floor(oldestHoursDiff)} horas. Solo se pueden eliminar pagos cargados en las últimas ${RESET_WINDOW_HOURS} horas.`,
       );
     }
 

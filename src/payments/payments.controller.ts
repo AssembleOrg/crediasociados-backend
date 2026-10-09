@@ -195,7 +195,7 @@ export class PaymentsController {
     summary: 'Resetear todos los pagos de un SubLoan',
     description:
       'Elimina todos los pagos de un SubLoan y revierte sus efectos en las wallets. ' +
-      'Solo se permite si el último pago fue hace menos de 24 horas. ' +
+      'Solo se permite si todos los pagos se cargaron hace menos de 48 horas. ' +
       'Registra el movimiento en el historial de pagos.',
   })
   @ApiParam({
@@ -209,7 +209,7 @@ export class PaymentsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'El último pago fue hace más de 24 horas o no hay pagos para resetear',
+    description: 'Algún pago se cargó hace más de 48 horas o no hay pagos para resetear',
   })
   @ApiResponse({
     status: 403,
