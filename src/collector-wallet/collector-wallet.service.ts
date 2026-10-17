@@ -381,7 +381,6 @@ export class CollectorWalletService {
           });
         }
 
-        const safeBalanceBefore = Number(safe.balance);
         const updatedSafe = await tx.safe.update({
           where: { id: safe.id },
           data: {
@@ -392,6 +391,8 @@ export class CollectorWalletService {
         });
 
         const safeBalanceAfter = Number(updatedSafe.balance);
+        // Saldo previo derivado del UPDATE atómico de la Safe (leído antes podía estar viejo)
+        const safeBalanceBefore = safeBalanceAfter - amount;
 
         // Crear transacción en la caja fuerte
         await tx.safeTransaction.create({
@@ -515,8 +516,6 @@ export class CollectorWalletService {
           });
         }
 
-        const safeBalanceBefore = Number(managerSafe.balance);
-
         // 3. Debitar de la collector wallet del manager
         const updatedCollectorWallet = await tx.collectorWallet.update({
           where: { id: collectorWallet.id },
@@ -541,6 +540,8 @@ export class CollectorWalletService {
         });
 
         const safeBalanceAfter = Number(updatedManagerSafe.balance);
+        // Saldo previo derivado del UPDATE atómico de la Safe (leído antes podía estar viejo)
+        const safeBalanceBefore = safeBalanceAfter - amount;
 
         // 5. Registrar transacción de retiro en la collector wallet
         const collectorTransaction = await tx.collectorWalletTransaction.create({
@@ -909,7 +910,6 @@ export class CollectorWalletService {
       // 2. Obtener o crear collector wallet del manager
       const managerCollectorWallet = await this.getOrCreateWallet(managerId, tx);
       
-      const safeBalanceBefore = Number(safe.balance);
 
       // Obtener la última transacción para determinar el saldo real de la collector wallet
       const lastCollectorTx = await tx.collectorWalletTransaction.findFirst({
@@ -929,6 +929,8 @@ export class CollectorWalletService {
       });
 
       const safeBalanceAfter = Number(updatedSafe.balance);
+      // Saldo previo derivado del UPDATE atómico de la Safe (leído antes podía estar viejo)
+      const safeBalanceBefore = safeBalanceAfter + amount;
 
       // 4. Acreditar a la collector wallet del manager
       const updatedCollectorWallet = await tx.collectorWallet.update({
@@ -2683,11 +2685,51 @@ export class CollectorWalletService {
         if (!existingReversal) {
           try {
             const disbursementAmount = Number(disbursement.amount);
-            const wallet = await this.prisma.collectorWallet.findUnique({
-              where: { id: disbursement.walletId },
+            // En transacción y con la wallet bloqueada: sin esto, un cobro o
+            // préstamo simultáneo leía el mismo saldo y uno de los dos se perdía.
+            const outcome = await this.prisma.$transaction(async (tx) => {
+              const wallet = await tx.collectorWallet.findUnique({
+                where: { id: disbursement.walletId },
+              });
+              if (!wallet) return null;
+              await this.lockWallet(tx, wallet.id);
+
+              // Obtener la última transacción para determinar el saldo real
+              const lastTransaction = await tx.collectorWalletTransaction.findFirst({
+                where: { walletId: wallet.id },
+                orderBy: { createdAt: 'desc' },
+              });
+
+              const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
+              const newBalance = currentBalance + disbursementAmount;
+
+              // Crear la transacción de reversión
+              // Usar CASH_ADJUSTMENT con amount positivo porque estamos devolviendo dinero (sumando al balance)
+              const reversalTransaction = await tx.collectorWalletTransaction.create({
+                data: {
+                  walletId: disbursement.walletId,
+                  userId: disbursement.userId,
+                  type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
+                  amount: new Prisma.Decimal(disbursementAmount), // Positivo porque devolvemos dinero
+                  currency: disbursement.currency,
+                  description: `Devolución desembolso por eliminación de préstamo ${loanTrack}`,
+                  balanceBefore: new Prisma.Decimal(currentBalance),
+                  balanceAfter: new Prisma.Decimal(newBalance),
+                },
+              });
+
+              // Actualizar el balance de la wallet
+              await tx.collectorWallet.update({
+                where: { id: disbursement.walletId },
+                data: {
+                  balance: new Prisma.Decimal(newBalance),
+                },
+              });
+
+              return { reversalTransaction, currentBalance, newBalance };
             });
 
-            if (!wallet) {
+            if (!outcome) {
               errors.push({
                 disbursementId: disbursement.id,
                 loanTrack,
@@ -2695,38 +2737,7 @@ export class CollectorWalletService {
               });
               continue;
             }
-
-            // Obtener la última transacción para determinar el saldo real
-            const lastTransaction = await this.prisma.collectorWalletTransaction.findFirst({
-              where: { walletId: wallet.id },
-              orderBy: { createdAt: 'desc' },
-            });
-
-            const currentBalance = lastTransaction ? Number(lastTransaction.balanceAfter) : 0;
-            const newBalance = currentBalance + disbursementAmount;
-
-            // Crear la transacción de reversión
-            // Usar CASH_ADJUSTMENT con amount positivo porque estamos devolviendo dinero (sumando al balance)
-            const reversalTransaction = await this.prisma.collectorWalletTransaction.create({
-              data: {
-                walletId: disbursement.walletId,
-                userId: disbursement.userId,
-                type: CollectorWalletTransactionType.CASH_ADJUSTMENT,
-                amount: new Prisma.Decimal(disbursementAmount), // Positivo porque devolvemos dinero
-                currency: disbursement.currency,
-                description: `Devolución desembolso por eliminación de préstamo ${loanTrack}`,
-                balanceBefore: new Prisma.Decimal(currentBalance),
-                balanceAfter: new Prisma.Decimal(newBalance),
-              },
-            });
-
-            // Actualizar el balance de la wallet
-            await this.prisma.collectorWallet.update({
-              where: { id: disbursement.walletId },
-              data: {
-                balance: new Prisma.Decimal(newBalance),
-              },
-            });
+            const { reversalTransaction, currentBalance, newBalance } = outcome;
 
             reversionsCreated.push({
               disbursementId: disbursement.id,

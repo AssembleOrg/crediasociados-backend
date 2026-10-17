@@ -114,7 +114,6 @@ export class WalletService {
     }
 
     const walletId = wallet.id; // Guardar el ID antes de la transacción
-    const balanceBefore = Number(wallet.balance);
 
     // Realizar depósito en transacción
     const result = await this.prisma.$transaction(async (tx) => {
@@ -129,6 +128,9 @@ export class WalletService {
       });
 
       const balanceAfter = Number(updatedWallet.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter - depositDto.amount;
 
       // Crear registro de transacción
       const transaction = await tx.walletTransaction.create({
@@ -185,8 +187,6 @@ export class WalletService {
       );
     }
 
-    const balanceBefore = Number(wallet.balance);
-
     // Realizar retiro en transacción
     const result = await this.prisma.$transaction(async (tx) => {
       // Actualizar balance
@@ -200,6 +200,9 @@ export class WalletService {
       });
 
       const balanceAfter = Number(updatedWallet.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter + withdrawalDto.amount;
 
       // Crear registro de transacción
       const transaction = await tx.walletTransaction.create({
@@ -306,8 +309,6 @@ export class WalletService {
 
     const managerWalletId = managerWallet.id; // Guardar el ID antes de la transacción
     const transferAmount = transferDto.amount;
-    const subadminBalanceBefore = Number(subadminWallet.balance);
-    const managerBalanceBefore = Number(managerWallet.balance);
 
     // Determinar dirección de la transferencia
     // Positivo: SUBADMIN -> MANAGER (transferencia normal)
@@ -341,6 +342,11 @@ export class WalletService {
       });
 
       const subadminBalanceAfter = Number(updatedSubadminWallet.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const subadminBalanceBefore = isPositiveTransfer
+        ? subadminBalanceAfter + absoluteAmount
+        : subadminBalanceAfter - absoluteAmount;
 
       // Crear una única transacción que registra la transferencia
       // userId: quien inicia la transferencia (siempre el SUBADMIN)
@@ -548,8 +554,6 @@ export class WalletService {
     // NO SE VALIDA SALDO - Se permite saldo negativo en la wallet principal
     // Los managers pueden operar con saldo negativo
 
-    const balanceBefore = Number(wallet.balance);
-
     // Actualizar balance
     const updatedWallet = await tx.wallet.update({
       where: { id: wallet.id },
@@ -561,6 +565,8 @@ export class WalletService {
     });
 
     const balanceAfter = Number(updatedWallet.balance);
+    // Saldo previo derivado del UPDATE atómico (ver deposit).
+    const balanceBefore = balanceAfter + amount;
 
     // Crear transacción
     await tx.walletTransaction.create({
@@ -613,8 +619,6 @@ export class WalletService {
 
     const wallet = await this.getOrCreateWallet(userId, tx);
 
-    const balanceBefore = Number(wallet.balance);
-
     // Actualizar balance
     const updatedWallet = await tx.wallet.update({
       where: { id: wallet.id },
@@ -626,6 +630,8 @@ export class WalletService {
     });
 
     const balanceAfter = Number(updatedWallet.balance);
+    // Saldo previo derivado del UPDATE atómico (ver deposit).
+    const balanceBefore = balanceAfter - amount;
 
     // Crear transacción
     await tx.walletTransaction.create({

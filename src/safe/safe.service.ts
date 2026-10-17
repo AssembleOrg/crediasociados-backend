@@ -144,7 +144,6 @@ export class SafeService {
   ): Promise<any> {
     return await this.prisma.$transaction(async (tx) => {
       const safe = await this.getOrCreateSafe(userId, tx);
-      const balanceBefore = Number(safe.balance);
 
       // Actualizar balance (permite saldo negativo)
       const updatedSafe = await tx.safe.update({
@@ -157,6 +156,9 @@ export class SafeService {
       });
 
       const balanceAfter = Number(updatedSafe.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter - amount;
 
       // Crear transacción
       const transaction = await tx.safeTransaction.create({
@@ -194,7 +196,6 @@ export class SafeService {
   ): Promise<any> {
     return await this.prisma.$transaction(async (tx) => {
       const safe = await this.getOrCreateSafe(userId, tx);
-      const balanceBefore = Number(safe.balance);
 
       // Actualizar balance (permite saldo negativo)
       const updatedSafe = await tx.safe.update({
@@ -207,6 +208,9 @@ export class SafeService {
       });
 
       const balanceAfter = Number(updatedSafe.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter + amount;
 
       // Crear transacción
       const transaction = await tx.safeTransaction.create({
@@ -251,7 +255,6 @@ export class SafeService {
   ): Promise<any> {
     return await this.prisma.$transaction(async (tx) => {
       const safe = await this.getOrCreateSafe(userId, tx);
-      const balanceBefore = Number(safe.balance);
 
       // Obtener el SUBADMIN ID
       const subadminId = await this.getSubadminId(userId, tx);
@@ -289,6 +292,9 @@ export class SafeService {
       });
 
       const balanceAfter = Number(updatedSafe.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter + amount;
 
       // Crear transacción (aquí se guarda el monto histórico) con referencia a la categoría
       const transaction = await tx.safeTransaction.create({
@@ -353,10 +359,8 @@ export class SafeService {
         throw new NotFoundException('Caja fuerte no encontrada');
       }
       
-      const balanceBefore = Number(currentSafe.balance);
-      
       this.logger.log(
-        `Transferencia a collector wallet: SafeId=${safe.id}, UserId=${userId}, BalanceBefore=${balanceBefore}, Amount=${amount}`,
+        `Transferencia a collector wallet: SafeId=${safe.id}, UserId=${userId}, BalanceBefore=${Number(currentSafe.balance)}, Amount=${amount}`,
       );
 
       // Actualizar balance de la caja fuerte (decrementar)
@@ -370,6 +374,9 @@ export class SafeService {
       });
 
       const balanceAfter = Number(updatedSafe.balance);
+      // Saldo previo derivado del UPDATE atómico: leído antes, otra operación
+      // simultánea podía cambiarlo y el movimiento quedaba con un saldo viejo.
+      const balanceBefore = balanceAfter + amount;
 
       // Transferir a la wallet de cobros
       // Obtener o crear collector wallet
@@ -474,11 +481,8 @@ export class SafeService {
         throw new NotFoundException('Una de las cajas fuertes no fue encontrada');
       }
 
-      const fromBalanceBefore = Number(currentFromSafe.balance);
-      const toBalanceBefore = Number(currentToSafe.balance);
-
       this.logger.log(
-        `Transferencia entre Safes: FromSafeId=${fromSafe.id} (balance=${fromBalanceBefore}), ToSafeId=${toSafe.id} (balance=${toBalanceBefore}), Amount=${amount}`,
+        `Transferencia entre Safes: FromSafeId=${fromSafe.id} (balance=${Number(currentFromSafe.balance)}), ToSafeId=${toSafe.id} (balance=${Number(currentToSafe.balance)}), Amount=${amount}`,
       );
 
       // Actualizar balances
@@ -502,6 +506,9 @@ export class SafeService {
 
       const fromBalanceAfter = Number(updatedFromSafe.balance);
       const toBalanceAfter = Number(updatedToSafe.balance);
+      // Saldos previos derivados del UPDATE atómico (ver deposit).
+      const fromBalanceBefore = fromBalanceAfter + amount;
+      const toBalanceBefore = toBalanceAfter - amount;
 
       // Crear transacciones en ambas cajas fuertes
       const fromTransaction = await tx.safeTransaction.create({
