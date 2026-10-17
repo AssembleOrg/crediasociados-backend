@@ -46,7 +46,23 @@ export class CollectorWalletService {
       });
     }
 
+    // Dentro de una transacción, bloquear la fila hasta el commit: cada
+    // operación calcula el saldo desde el último movimiento, y dos operaciones
+    // simultáneas leían el mismo saldo y una pisaba a la otra.
+    if (transaction) {
+      wallet = await this.lockWallet(transaction, wallet.id);
+    }
+
     return wallet;
+  }
+
+  /**
+   * Bloquea la wallet (SELECT ... FOR UPDATE) hasta el fin de la transacción y
+   * la devuelve releída, con el saldo que dejó la última operación confirmada.
+   */
+  async lockWallet(tx: Prisma.TransactionClient, walletId: string): Promise<any> {
+    await tx.$queryRaw`SELECT id FROM collector_wallets WHERE id = ${walletId} FOR UPDATE`;
+    return tx.collectorWallet.findUniqueOrThrow({ where: { id: walletId } });
   }
 
   /**
@@ -285,7 +301,7 @@ export class CollectorWalletService {
     // Usar transacción atómica para el retiro y depósito en caja fuerte
     const result = await this.prisma.$transaction(
       async (tx) => {
-        // Obtener wallet con lock para evitar condiciones de carrera
+        // Obtener wallet (se bloquea abajo para evitar condiciones de carrera)
         const wallet = await tx.collectorWallet.findUnique({
           where: { userId },
         });
@@ -293,6 +309,8 @@ export class CollectorWalletService {
         if (!wallet) {
           throw new NotFoundException('Wallet de cobrador no encontrada');
         }
+
+        await this.lockWallet(tx, wallet.id);
 
         // Obtener la última transacción para determinar el saldo real
         const lastTransaction = await tx.collectorWalletTransaction.findFirst({
@@ -468,6 +486,8 @@ export class CollectorWalletService {
         if (!collectorWallet) {
           throw new NotFoundException('Wallet de cobrador no encontrada');
         }
+
+        await this.lockWallet(tx, collectorWallet.id);
 
         // Obtener la última transacción para determinar el saldo real
         const lastTransaction = await tx.collectorWalletTransaction.findFirst({
