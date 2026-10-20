@@ -30,6 +30,7 @@ import { HttpLoggingInterceptor } from './common/interceptors/http-logging.inter
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AuditService } from './common/services/audit.service';
+import { throttlerModuleOptions } from './common/throttler/throttler.config';
 import configuration from './config/configuration';
 
 @Module({
@@ -38,12 +39,10 @@ import configuration from './config/configuration';
       isGlobal: true,
       load: [configuration],
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000,
-        limit: 50,
-      },
-    ]),
+    // Rate limit por ruta y por usuario (o IP real sin sesión): ver
+    // common/throttler/throttler.config.ts. JwtAuthGuard tiene que seguir
+    // registrado antes que ThrottlerGuard para que exista req.user.
+    ThrottlerModule.forRoot(throttlerModuleOptions),
     PrismaModule,
     AuthModule,
     UsersModule,

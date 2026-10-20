@@ -101,7 +101,7 @@ export class LoansController {
 
   @Get('tracking')
   @Public()
-  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 requests per minute per IP
+  @Throttle({ default: { ttl: 60000, limit: 20 } }) // 20 por minuto por IP real
   @ApiOperation({
     summary:
       'Obtener información del préstamo por DNI y código de tracking (Endpoint público)',

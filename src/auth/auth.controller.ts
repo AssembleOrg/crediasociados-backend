@@ -75,7 +75,10 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  @Throttle({ default: { ttl: 60000, limit: 5 } }) // 5 login attempts per minute per IP
+  // 20 intentos por minuto por IP real del cliente (ver throttler-tracker).
+  // Si Cloudflare/el proxy no dejan la IP real, la clave puede ser compartida
+  // por varios usuarios, por eso no es más bajo.
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User login' })
   @ApiResponse({ status: 200, description: 'Login exitoso' })
@@ -104,7 +107,7 @@ export class AuthController {
 
   @Public()
   @Post('refresh')
-  @Throttle({ default: { ttl: 60000, limit: 10 } }) // 10 refresh attempts per minute per IP
+  @Throttle({ default: { ttl: 60000, limit: 60 } }) // 60 por minuto por IP real
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Actualizar token de acceso' })
   @ApiResponse({ status: 200, description: 'Token actualizado exitosamente' })
