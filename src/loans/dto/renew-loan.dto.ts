@@ -55,4 +55,16 @@ export class RenewLoanDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: 36000,
+    description:
+      'Monto con que se cancela el préstamo anterior. Default: el saldo pendiente completo. ' +
+      'Si es menor, la diferencia se condona como descuento (Loan.forgivenAmount) y se avisa al subadmin. ' +
+      'No puede superar el saldo pendiente.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsPositive()
+  settlementAmount?: number;
 }

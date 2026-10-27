@@ -11,7 +11,8 @@ import { LoanFiltersDto, LoanChartDataDto } from '../common/dto';
 import { DateUtil, TrackingCodeUtil } from '../common/utils';
 import { SubLoanGeneratorService } from './sub-loan-generator.service';
 import { LoanPdfService } from './loan-pdf.service';
-import { Prisma, SubLoanStatus, UserRole } from '@prisma/client';
+import { NotificationType, Prisma, SubLoanStatus, UserRole } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import { LoanStatus, WalletTransactionType } from 'src/common/enums';
 import { CollectorWalletTransactionType } from '../common/enums';
 import { CollectorWalletService } from '../collector-wallet/collector-wallet.service';
@@ -25,6 +26,7 @@ export class LoansService {
     private collectorWalletService: CollectorWalletService,
     private walletService: WalletService,
     private loanPdfService: LoanPdfService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async createLoan(createLoanDto: CreateLoanDto, userId: string) {
@@ -1448,6 +1450,19 @@ export class LoansService {
       );
     }
 
+    // 3b. Monto con que se cancela: por defecto el saldo completo. Si el
+    //     cobrador acordó un descuento, la diferencia se condona (quita).
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const settledAmount = round2(
+      dto.settlementAmount !== undefined ? Number(dto.settlementAmount) : saldoPendiente,
+    );
+    if (settledAmount > round2(saldoPendiente)) {
+      throw new BadRequestException(
+        `El monto para cancelar ($${settledAmount.toLocaleString('es-AR')}) supera el saldo pendiente ($${round2(saldoPendiente).toLocaleString('es-AR')})`,
+      );
+    }
+    const forgivenAmount = round2(saldoPendiente - settledAmount);
+
     // 4. Generar código de tracking para el nuevo préstamo (fuera de la tx principal:
     //    TrackingCodeUtil usa su propia $transaction y no podemos anidar)
     const trackingData = await TrackingCodeUtil.generateSequentialTrackingCode(
@@ -1465,15 +1480,28 @@ export class LoansService {
       async (tx) => {
         const now = new Date();
 
-        // 6a. Marcar todas las subloans pendientes como PAID
+        // 6a. Marcar todas las subloans pendientes como PAID. El monto cobrado
+        //     se reparte en orden; si hay descuento, las cuotas que no llegan a
+        //     cubrirse bajan su total a lo pagado (como "Terminar préstamo").
+        let remainingToApply = settledAmount;
         for (const sl of pendingSubLoans) {
+          const total = Number(sl.totalAmount);
+          const alreadyPaid = Number(sl.paidAmount);
+          const applied = round2(Math.min(Math.max(0, total - alreadyPaid), remainingToApply));
+          remainingToApply = round2(remainingToApply - applied);
+          const newPaid = round2(alreadyPaid + applied);
+          const isForgiven = newPaid < total;
           await tx.subLoan.update({
             where: { id: sl.id },
             data: {
               status: SubLoanStatus.PAID,
               paidDate: now,
-              paidAmount: new Prisma.Decimal(Number(sl.totalAmount)),
+              paidAmount: new Prisma.Decimal(newPaid),
               daysOverdue: 0,
+              ...(isForgiven && {
+                originalTotalAmount: sl.originalTotalAmount ?? sl.totalAmount,
+                totalAmount: new Prisma.Decimal(newPaid),
+              }),
             },
           });
         }
@@ -1484,10 +1512,12 @@ export class LoansService {
         await tx.payment.create({
           data: {
             subLoanId: lastPending.id,
-            amount: new Prisma.Decimal(saldoPendiente),
+            amount: new Prisma.Decimal(settledAmount),
             currency: existingLoan.currency,
             paymentDate: now,
-            description: `Cancelación anticipada por renovación - ${existingLoan.loanTrack}`,
+            description:
+              `Cancelación anticipada por renovación - ${existingLoan.loanTrack}` +
+              (forgivenAmount > 0 ? ` (descuento $${forgivenAmount.toLocaleString('es-AR')})` : ''),
           },
         });
 
@@ -1497,22 +1527,26 @@ export class LoansService {
           data: {
             status: LoanStatus.COMPLETED,
             completedDate: now,
+            ...(forgivenAmount > 0 && {
+              amount: { decrement: new Prisma.Decimal(forgivenAmount) },
+              forgivenAmount: { increment: new Prisma.Decimal(forgivenAmount) },
+            }),
           },
         });
 
         // 6d. Acreditar a la cartera principal del manager (LOAN_PAYMENT)
         await this.walletService.credit({
           userId,
-          amount: saldoPendiente,
+          amount: settledAmount,
           type: WalletTransactionType.LOAN_PAYMENT,
           description: `Cancelación por renovación ${existingLoan.loanTrack}`,
           transaction: tx,
         });
 
-        // 6d-bis. Acreditar saldoPendiente a la wallet del cobrador (ingreso)
+        // 6d-bis. Acreditar lo cobrado a la wallet del cobrador (ingreso)
         await this.collectorWalletService.recordCollection({
           userId,
-          amount: saldoPendiente,
+          amount: settledAmount,
           description: `Cancelación por renovación ${existingLoan.loanTrack}`,
           subLoanId: lastPending.id,
           transaction: tx,
@@ -1603,6 +1637,35 @@ export class LoansService {
       },
     );
 
+    // Renovación con descuento: avisar al subadmin del cobrador, igual que
+    // "Terminar préstamo" con quita.
+    if (forgivenAmount > 0) {
+      const managerUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, createdById: true },
+      });
+      if (managerUser?.createdById) {
+        await this.notificationsService.notify({
+          userId: managerUser.createdById,
+          type: NotificationType.LOAN_FINISHED_EARLY,
+          title: 'Renovación con descuento',
+          message: `${managerUser.fullName} renovó el préstamo ${existingLoan.loanTrack} de ${existingLoan.client.fullName} cobrando $${settledAmount.toLocaleString('es-AR')} de $${round2(saldoPendiente).toLocaleString('es-AR')} (descuento $${forgivenAmount.toLocaleString('es-AR')})`,
+          data: {
+            loanId: existingLoan.id,
+            loanTrack: existingLoan.loanTrack,
+            clientId: existingLoan.clientId,
+            clientName: existingLoan.client.fullName,
+            managerId: userId,
+            managerName: managerUser.fullName,
+            forgivenAmount,
+            totalPactado: Number(existingLoan.amount),
+            settledAmount,
+            newLoanId,
+          },
+        });
+      }
+    }
+
     // 7. Releer el nuevo préstamo con subloans y cliente para la respuesta
     const newLoan = await this.prisma.loan.findUnique({
       where: { id: newLoanId },
@@ -1641,7 +1704,8 @@ export class LoansService {
       previousLoan: {
         id: existingLoan.id,
         loanTrack: existingLoan.loanTrack,
-        settledAmount: saldoPendiente,
+        settledAmount,
+        forgivenAmount,
       },
       newLoan: transformedNewLoan,
       pdfBase64: pdf.pdfBase64,
