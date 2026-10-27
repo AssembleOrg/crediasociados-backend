@@ -1121,11 +1121,22 @@ export class LoansService {
         });
       }
 
-      // 5. Devolver dinero a la wallet si hay monto a devolver
+      // 5. Devolver a la wallet principal SOLO si el desembolso salió de ahí.
+      // Desde nov-2025 createLoan/renewLoan debitan únicamente la collector
+      // wallet (paso 4); acreditar la principal sin ese débito la inflaba con
+      // el capital de cada préstamo borrado.
       let updatedWallet: any = null;
       let walletTransaction: any = null;
 
-      if (montoADevolver > 0) {
+      const legacyWalletDisbursement = await tx.walletTransaction.findFirst({
+        where: {
+          walletId: managerWallet.id,
+          type: WalletTransactionType.LOAN_DISBURSEMENT,
+          description: { contains: loan.loanTrack },
+        },
+      });
+
+      if (legacyWalletDisbursement && montoADevolver > 0) {
         updatedWallet = await tx.wallet.update({
           where: { id: managerWallet.id },
           data: {
